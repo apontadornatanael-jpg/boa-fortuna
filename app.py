@@ -432,11 +432,7 @@ else:
                 else:
                     st.error("O valor final 'Até (m)' deve ser maior que o valor inicial 'De (m)'.")
 
-        st.divider()
-        st.subheader(f"Manobras Salvas para o Furo: {furo_atual}")
-        manobras_furo = buscar_manobras(furo_atual)
-        
-        if manobras_furo:
+      if manobras_furo:
             dados_tabela = []
             for row in manobras_furo:
                 m_id = row[0]
@@ -457,6 +453,11 @@ else:
                 columns=["ID", "De (m)", "Até (m)", "Avanço (m)", "Recup (m)", "Recup (%)", "Caixa", "H. Trab", "H. Parado", "Descrição Litológica"]
             )
             st.dataframe(df_manobras, use_container_width=True)
+
+            col_excluir, col_btn = st.columns([3, 1])
+            with col_excluir:
+                opcoes_manobra = {f"ID #{row[0]} | De {row[1]:.2f}m até {row[2]:.2f}m (Avanço: {row[2]-row[1]:.2f}m)": row[0] for row in manobras_furo}
+                manobra_selecionada = st.selectbox("Selecione a manobra que deseja apagar:", list(opcoes_manobra.keys()))
             
             with col_btn:
                 st.write("")
