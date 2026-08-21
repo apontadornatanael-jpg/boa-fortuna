@@ -4,7 +4,7 @@ from datetime import datetime, date
 import pandas as pd
 
 # Configuração da página
-st.set_page_config(page_title="Boa Fortuna Investimento", page_icon="📈", layout="centered")
+st.set_page_config(page_title="Boa Fortuna Investimento", page_icon="🚜", layout="wide")
 
 # --- CREDENCIAIS DE ACESSO ---
 USUARIO_CORRETO = "admin"
@@ -53,71 +53,10 @@ def salvar_boletim(empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, 
 def buscar_registros():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute('SELECT furo_id, obra_cliente, cidade_uf, sondador, profundidade_m, data_registro FROM boletins_campo ORDER BY id DESC')
+    c.execute('SELECT furo_id, obra_cliente, cidade_uf, sondador, profundidade_m, tipo_sondagem, data_registro FROM boletins_campo ORDER BY id DESC')
     dados = c.fetchall()
     conn.close()
     return dados
-
-# --- JANELAS MODAIS (ST.DIALOG) ---
-
-@st.dialog("📋 Novo Boletim de Campo", width="large")
-def modal_novo_boletim():
-    st.markdown("### 🏢 Cabeçalho de Identificação")
-    
-    with st.form("form_modal_boletim", clear_on_submit=True):
-        # Linha 1: Dados Institucionais e Localização
-        col1, col2 = st.columns(2)
-        with col1:
-            empresa = st.text_input("Nome da Empresa Executora", value="Boa Fortuna Perfurações e Sondagens")
-            obra = st.text_input("Cliente / Nome da Obra", placeholder="Ex: Parque Eólico - Fase 2")
-        with col2:
-            cidade = st.text_input("Cidade / UF", placeholder="Ex: Natal / RN")
-            data_campo = st.date_input("Data do Ensaio", value=date.today())
-
-        st.markdown("---")
-        st.markdown("### 👥 Equipe Responsável")
-        
-        # Linha 2: Responsáveis Técnicos e Operacionais
-        col3, col4 = st.columns(2)
-        with col3:
-            coordenador = st.text_input("Coordenador de Campo", placeholder="Nome do Engenheiro / Coordenador")
-            supervisor = st.text_input("Supervisor / TST", placeholder="Nome do Supervisor")
-        with col4:
-            sondador = st.text_input("Sondador Principal", placeholder="Nome do Sondador")
-            auxiliares = st.text_input("Auxiliares de Sondagem", placeholder="Ex: João Silva, Pedro Santos")
-
-        st.markdown("---")
-        st.markdown("### 📌 Dados do Furo e Perfuração")
-        
-        # Linha 3: Dados Técnicos do Furo
-        col5, col6, col7 = st.columns(3)
-        with col5:
-            furo = st.text_input("Identificação do Furo", placeholder="Ex: SP-01 / SR-02")
-        with col6:
-            tipo_sondagem = st.selectbox("Tipo de Sondagem", ["SPT (A Percussão)", "Rotativa", "Mista", "Poço de Inspeção"])
-        with col7:
-            profundidade = st.number_input("Profundidade Final (m)", min_value=0.0, step=0.5)
-
-        obs = st.text_area("Observações Gerais / Nível d'Água (NA)", placeholder="Registros de NA, paralisação ou anomalias do terreno...")
-        
-        btn_confirmar = st.form_submit_button("💾 Salvar Boletim de Campo", use_container_width=True)
-        if btn_confirmar:
-            if furo and obra:
-                salvar_boletim(empresa, obra, cidade, coordenador, supervisor, sondador, auxiliares, furo, tipo_sondagem, profundidade, obs)
-                st.success(f"✅ Boletim do furo **{furo}** salvo com sucesso!")
-                st.rerun()
-            else:
-                st.warning("⚠️ Preencha os campos obrigatórios: Nome da Obra e Identificação do Furo.")
-
-@st.dialog("📊 Histórico de Registros")
-def modal_historico():
-    st.write("Registros salvos no banco de dados:")
-    registros = buscar_registros()
-    if registros:
-        df = pd.DataFrame(registros, columns=["Furo", "Obra", "Cidade/UF", "Sondador", "Prof. (m)", "Data/Hora"])
-        st.dataframe(df, use_container_width=True)
-    else:
-        st.info("Nenhum registro encontrado.")
 
 # --- ESTADO DA SESSÃO ---
 if "logado" not in st.session_state:
@@ -143,7 +82,7 @@ if not st.session_state.logado:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-bottom: 0px;'>📈 Boa Fortuna</h1>", unsafe_allow_html=True)
-        st.markdown("<h4 style='text-align: center; color: #8B5A2B; margin-top: -5px; margin-bottom: 25px;'>INVESTIMENTO & SONDAREM</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='text-align: center; color: #8B5A2B; margin-top: -5px; margin-bottom: 25px;'>INVESTIMENTO & SONDAGEM</h4>", unsafe_allow_html=True)
 
         with st.form("login_form"):
             user_input = st.text_input("Usuário", placeholder="Digite seu usuário", label_visibility="collapsed")
@@ -157,7 +96,7 @@ if not st.session_state.logado:
                 else:
                     st.error("Usuário ou senha incorretos.")
 
-# --- PAINEL PRINCIPAL ---
+# --- PAINEL PRINCIPAL COM NAVEGAÇÃO LATERAL ---
 else:
     st.markdown("""
         <style>
@@ -166,34 +105,105 @@ else:
         </style>
     """, unsafe_allow_html=True)
 
+    # --- BARRA LATERAL (MENU DE SELEÇÃO) ---
+    st.sidebar.title("🚜 Boa Fortuna")
     st.sidebar.markdown(f"👤 Usuário: **{USUARIO_CORRETO}**")
-    if st.sidebar.button("Sair"):
+    
+    st.sidebar.divider()
+    st.sidebar.subheader("📌 Menu de Navegação")
+    
+    # Opções do Menu
+    opcao = st.sidebar.radio(
+        "Selecione uma etapa para visualizar:",
+        [
+            "🏢 Cabeçalho e Empresa",
+            "👥 Equipe de Campo",
+            "📌 Dados do Furo & Perfuração",
+            "📊 Histórico de Boletins"
+        ]
+    )
+
+    st.sidebar.divider()
+    if st.sidebar.button("🚪 Sair da Conta", use_container_width=True):
         st.session_state.logado = False
         st.rerun()
 
-    # Cabeçalho Principal da Tela Interna
-    st.title("🚜 Boa Fortuna - Diário de Campo")
-    st.markdown("Gerenciamento de boletins de sondagem geotécnica e perfuração.")
-
-    st.divider()
-
-    # Botões de Ação
-    col_btn1, col_btn2 = st.columns(2)
-
-    with col_btn1:
-        if st.button("📝 Preencher Novo Boletim", use_container_width=True):
-            modal_novo_boletim()
-
-    with col_btn2:
-        if st.button("📊 Ver Histórico de Furos", use_container_width=True):
-            modal_historico()
-
-    st.divider()
+    # --- ÁREA CENTRAL (MUDANÇA CONFORME O CLIQUE NA LATERAL) ---
     
-    st.subheader("📌 Últimos Furos Registrados")
-    registros = buscar_registros()
-    if registros:
-        df = pd.DataFrame(registros[:5], columns=["Furo", "Obra", "Cidade/UF", "Sondador", "Prof. (m)", "Data/Hora"])
-        st.dataframe(df, use_container_width=True)
-    else:
-        st.info("Nenhum furo registrado até o momento.")
+    # 1. ETAPA: CABEÇALHO E EMPRESA
+    if opcao == "🏢 Cabeçalho e Empresa":
+        st.title("🏢 1. Cabeçalho de Identificação")
+        st.markdown("Preencha as informações institucionais e de localização do projeto.")
+        
+        with st.form("form_cabecalho"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.session_state["empresa"] = st.text_input("Nome da Empresa Executora", value=st.session_state.get("empresa", "Boa Fortuna Perfurações e Sondagens"))
+                st.session_state["obra"] = st.text_input("Cliente / Nome da Obra", value=st.session_state.get("obra", ""))
+            with col2:
+                st.session_state["cidade"] = st.text_input("Cidade / UF", value=st.session_state.get("cidade", ""))
+                st.session_state["data_campo"] = st.date_input("Data do Ensaio", value=st.session_state.get("data_campo", date.today()))
+            
+            st.form_submit_button("✅ Salvar Etapa 1")
+
+    # 2. ETAPA: EQUIPE DE CAMPO
+    elif opcao == "👥 Equipe de Campo":
+        st.title("👥 2. Equipe Responsável")
+        st.markdown("Cadastre os profissionais e responsáveis técnicos da operação.")
+        
+        with st.form("form_equipe"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.session_state["coordenador"] = st.text_input("Coordenador de Campo", value=st.session_state.get("coordenador", ""))
+                st.session_state["supervisor"] = st.text_input("Supervisor / TST", value=st.session_state.get("supervisor", ""))
+            with col2:
+                st.session_state["sondador"] = st.text_input("Sondador Principal", value=st.session_state.get("sondador", ""))
+                st.session_state["auxiliares"] = st.text_input("Auxiliares de Sondagem", value=st.session_state.get("auxiliares", ""))
+
+            st.form_submit_button("✅ Salvar Etapa 2")
+
+    # 3. ETAPA: DADOS DO FURO & CONSOLIDAÇÃO
+    elif opcao == "📌 Dados do Furo & Perfuração":
+        st.title("📌 3. Dados do Furo e Envio do Boletim")
+        st.markdown("Insira os dados técnicos e finalize a gravação no banco de dados.")
+        
+        with st.form("form_furo"):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                furo = st.text_input("Identificação do Furo", placeholder="Ex: SP-01")
+            with col2:
+                tipo_sondagem = st.selectbox("Tipo de Sondagem", ["SPT (A Percussão)", "Rotativa", "Mista", "Poço de Inspeção"])
+            with col3:
+                profundidade = st.number_input("Profundidade Final (m)", min_value=0.0, step=0.5)
+
+            obs = st.text_area("Observações Gerais / Nível d'Água (NA)", placeholder="Registros de NA, paralisação...")
+
+            btn_finalizar = st.form_submit_button("💾 Finalizar e Gravar Boletim Completo", use_container_width=True)
+
+            if btn_finalizar:
+                if furo:
+                    salvar_boletim(
+                        st.session_state.get("empresa", "Boa Fortuna"),
+                        st.session_state.get("obra", "Não informada"),
+                        st.session_state.get("cidade", "-"),
+                        st.session_state.get("coordenador", "-"),
+                        st.session_state.get("supervisor", "-"),
+                        st.session_state.get("sondador", "-"),
+                        st.session_state.get("auxiliares", "-"),
+                        furo, tipo_sondagem, profundidade, obs
+                    )
+                    st.success(f"✅ Boletim do furo **{furo}** gravado com sucesso!")
+                else:
+                    st.warning("⚠️ Preencha a Identificação do Furo antes de gravar.")
+
+    # 4. ETAPA: HISTÓRICO
+    elif opcao == "📊 Histórico de Boletins":
+        st.title("📊 Histórico de Boletins Registrados")
+        st.markdown("Relação completa de todos os furos salvos no sistema.")
+        
+        registros = buscar_registros()
+        if registros:
+            df = pd.DataFrame(registros, columns=["Furo", "Obra", "Cidade/UF", "Sondador", "Prof. (m)", "Tipo", "Data/Hora"])
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.info("Nenhum registro encontrado no banco de dados.")
