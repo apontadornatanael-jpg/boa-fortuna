@@ -49,43 +49,52 @@ def buscar_registros():
     conn.close()
     return dados
 
+# --- JANELAS MODAIS (POPUPS VIA ST.DIALOG) ---
+
+@st.dialog("➕ Novo Lançamento Financeiro")
+def modal_novo_lancamento():
+    st.write("Preencha os dados do investimento abaixo:")
+    with st.form("form_modal_registro", clear_on_submit=True):
+        cliente = st.text_input("Cliente / Operação", placeholder="Ex: Operação Tesouro Direct")
+        valor = st.number_input("Valor (R$)", min_value=0.0, step=100.0)
+        obs = st.text_area("Observações", placeholder="Detalhes...")
+        
+        btn_confirmar = st.form_submit_button("💾 Salvar Registro")
+        if btn_confirmar:
+            if cliente:
+                salvar_registro(cliente, valor, obs)
+                st.success(f"Lançamento de **{cliente}** gravado!")
+                st.rerun()
+            else:
+                st.warning("Preencha o campo Cliente / Operação.")
+
+@st.dialog("📊 Histórico Completo")
+def modal_historico():
+    st.write("Relação de todas as transações cadastradas:")
+    registros = buscar_registros()
+    if registros:
+        df = pd.DataFrame(registros, columns=["Cliente/Operação", "Valor (R$)", "Observação", "Data/Hora"])
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("Nenhum lançamento encontrado.")
+
 # --- ESTADO DA SESSÃO ---
 if "logado" not in st.session_state:
     st.session_state.logado = False
 
-# --- TELA DE LOGIN (ESTILO MARROM CLARO & AZUL) ---
+# --- TELA DE LOGIN ---
 if not st.session_state.logado:
     st.markdown("""
         <style>
-        /* Fundo em Marrom Claro Suave */
-        .stApp { 
-            background-color: #D2B48C; 
-        }
-        
-        /* Cartão Central Branco com Borda Azul */
+        .stApp { background-color: #D2B48C; }
         div[data-testid="stForm"] { 
-            background-color: #ffffff; 
-            padding: 35px; 
-            border-radius: 12px; 
-            border-top: 6px solid #1E3A8A;
-            box-shadow: 0px 8px 16px rgba(0, 0, 0, 0.15);
+            background-color: #ffffff; padding: 35px; border-radius: 12px; 
+            border-top: 6px solid #1E3A8A; box-shadow: 0px 8px 16px rgba(0, 0, 0, 0.15);
         }
-        
-        /* Botão Principal em Azul Investimento */
         div[data-testid="stForm"] button { 
-            background-color: #1E3A8A !important; 
-            color: white !important; 
-            font-weight: bold !important; 
-            border-radius: 6px !important;
-            width: 100% !important; 
-            border: none !important;
-            height: 45px !important;
+            background-color: #1E3A8A !important; color: white !important; 
+            font-weight: bold !important; border-radius: 6px !important; width: 100% !important;
         }
-        
-        div[data-testid="stForm"] button:hover {
-            background-color: #2563EB !important;
-        }
-
         #MainMenu, footer, header { visibility: hidden; }
         </style>
     """, unsafe_allow_html=True)
@@ -93,7 +102,7 @@ if not st.session_state.logado:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-bottom: 0px;'>📈 Boa Fortuna</h1>", unsafe_allow_html=True)
-        st.markdown("<h4 style='text-align: center; color: #8B5A2B; margin-top: -5px; margin-bottom: 25px; letter-spacing: 1px;'>INVESTIMENTO</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='text-align: center; color: #8B5A2B; margin-top: -5px; margin-bottom: 25px;'>INVESTIMENTO</h4>", unsafe_allow_html=True)
 
         with st.form("login_form"):
             user_input = st.text_input("Usuário", placeholder="Digite seu usuário", label_visibility="collapsed")
@@ -107,9 +116,8 @@ if not st.session_state.logado:
                 else:
                     st.error("Usuário ou senha incorretos.")
 
-# --- PAINEL PRINCIPAL (APÓS LOGIN) ---
+# --- PAINEL PRINCIPAL (COM BOTOES QUE ABREM JANELAS) ---
 else:
-    # Customização da barra lateral e página interna
     st.markdown("""
         <style>
         .stApp { background-color: #F5F2EB; }
@@ -123,32 +131,28 @@ else:
         st.rerun()
 
     st.title("💼 Boa Fortuna Investimento")
-    st.markdown("Painel de controle e lançamento de registros.")
-
-    with st.form("form_registro", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            cliente = st.text_input("Cliente / Operação", placeholder="Ex: Cliente A")
-        with col2:
-            valor = st.number_input("Valor (R$)", min_value=0.0, step=100.0)
-            
-        obs = st.text_area("Observações", placeholder="Detalhes da transação...")
-        
-        btn_salvar = st.form_submit_button("💾 Confirmar Lançamento")
-
-        if btn_salvar:
-            if cliente:
-                salvar_registro(cliente, valor, obs)
-                st.success(f"✅ Registro de **{cliente}** gravado com sucesso!")
-            else:
-                st.warning("⚠️ Informe o nome do cliente ou operação.")
+    st.markdown("Selecione uma opção abaixo para abrir em uma nova janela modal:")
 
     st.divider()
-    st.subheader("📊 Histórico de Lançamentos")
-    registros = buscar_registros()
 
+    # Painel de Botões que abrem as Janelas Modais
+    col_btn1, col_btn2 = st.columns(2)
+
+    with col_btn1:
+        if st.button("➕ Novo Lançamento", use_container_width=True):
+            modal_novo_lancamento()
+
+    with col_btn2:
+        if st.button("📊 Ver Histórico", use_container_width=True):
+            modal_historico()
+
+    st.divider()
+    
+    # Exibição resumida na tela principal
+    st.subheader("📌 Resumo Recente")
+    registros = buscar_registros()
     if registros:
-        df = pd.DataFrame(registros, columns=["Cliente/Operação", "Valor (R$)", "Observação", "Data/Hora"])
+        df = pd.DataFrame(registros[:3], columns=["Cliente/Operação", "Valor (R$)", "Observação", "Data/Hora"])
         st.dataframe(df, use_container_width=True)
     else:
-        st.info("Nenhum lançamento registrado até o momento.")
+        st.info("Nenhum registro cadastrado.")
