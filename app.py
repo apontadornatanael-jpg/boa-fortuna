@@ -371,8 +371,8 @@ else:
         furo_atual = st.text_input("Identificação do Furo", value=st.session_state.get("furo_id", "SP-01"), key="input_furo_manobra")
         st.session_state["furo_id"] = furo_atual
 
-        manobras_existentes = buscar_manobras(furo_atual)
-        prox_de = manobras_existentes[-1][2] if manobras_existentes else 0.0
+        manobras_furo = buscar_manobras(furo_atual)
+        prox_de = manobras_furo[-1][2] if manobras_furo else 0.0
         prox_ate = round(prox_de + 1.5, 2)
         
         st.markdown(f"#### 📐 Profundidade Atual Perfurada: **{prox_de:.2f} m**")
@@ -386,7 +386,7 @@ else:
             with col3:
                 recup_m = st.number_input("Recup. (m)", min_value=0.0, step=0.1, value=round(max(0.0, ate_m - de_m), 2), format="%.2f")
             with col4:
-                num_caixa = st.text_input("Nº da Caixa", value=manobras_existentes[-1][5] if manobras_existentes else "01")
+                num_caixa = st.text_input("Nº da Caixa", value=manobras_furo[-1][5] if manobras_furo else "01")
             with col5:
                 horas_trab = st.number_input("Horas Trab. (h)", min_value=0.0, step=0.5, value=1.0, format="%.1f")
             with col6:
@@ -432,7 +432,10 @@ else:
                 else:
                     st.error("O valor final 'Até (m)' deve ser maior que o valor inicial 'De (m)'.")
 
-      if manobras_furo:
+        st.divider()
+        st.subheader(f"Manobras Salvas para o Furo: {furo_atual}")
+
+        if manobras_furo:
             dados_tabela = []
             for row in manobras_furo:
                 m_id = row[0]
