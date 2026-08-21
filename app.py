@@ -5,6 +5,12 @@ import pandas as pd
 from PIL import Image
 import io
 
+# Importações para geração do PDF via ReportLab
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+
 # Configuração da página
 st.set_page_config(page_title="Boa Fortuna - Sistema de Sondagem", layout="wide")
 
@@ -58,7 +64,6 @@ def init_db():
         )
     ''')
     
-    # Migração para garantir suporte às fotos
     c.execute("PRAGMA table_info(manobras_testemunho)")
     colunas = [col[1] for col in c.fetchall()]
     for col_foto in ["foto1", "foto2", "foto3"]:
@@ -154,7 +159,7 @@ def salvar_manobra(furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario,
     
     f1 = pil_para_bytes(fotos_pil[0]) if fotos_pil and len(fotos_pil) > 0 else None
     f2 = pil_para_bytes(fotos_pil[1]) if fotos_pil and len(fotos_pil) > 1 else None
-    f3 = pil_para_bytes(fotos_pil[2]) if fotos_pil and len(fotos_pil) > 2 else None
+    f3 = pil_para_bytes(fotos_pil[2]) if fotos_pil and len(fotos_pil) > 3 else None
 
     c.execute('''
         INSERT INTO manobras_testemunho
@@ -183,6 +188,80 @@ def buscar_manobras(furo_id=None):
     dados = c.fetchall()
     conn.close()
     return dados
+
+# --- FUNÇÃO PARA GERAR PDF DO BOLETIM DE CAMPO ---
+def gerar_pdf_boletim(furo_id, obs_fechamento=""):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    story = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor('#1E3A8A'), alignment=1, spaceAfter=10)
+    sub_style = ParagraphStyle('SubStyle', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#555555'), alignment=1, spaceAfter=15)
+    header_style = ParagraphStyle('HeaderStyle', parent=styles['Heading2'], fontSize=11, textColor=colors.HexColor('#1E3A8A'), spaceBefore=10, spaceAfter=5)
+    cell_style = ParagraphStyle('CellStyle', parent=styles['Normal'], fontSize=8)
+
+    # Título do Relatório
+    empresa = st.session_state.get("empresa", "Boa Fortuna Perfurações")
+    story.append(Paragraph(f"<b>{empresa.upper()}</b>", title_style))
+    story.append(Paragraph(f"BOLETIM DIÁRIO DE SONDAGEM (BDS) - FURO: <b>{furo_id}</b>", sub_style))
+
+    # Tabela de Dados Gerais
+    dados_gerais = [
+        [
+            Paragraph(f"<b>Obra/Cliente:</b> {st.session_state.get('obra', '-')}", cell_style),
+            Paragraph(f"<b>Cidade/UF:</b> {st.session_state.get('cidade', '-')}", cell_style),
+            Paragraph(f"<b>Data:</b> {st.session_state.get('data_campo', date.today())}", cell_style)
+        ],
+        [
+            Paragraph(f"<b>Sondador:</b> {st.session_state.get('sondador', '-')}", cell_style),
+            Paragraph(f"<b>Coordenador:</b> {st.session_state.get('coordenador', '-')}", cell_style),
+            Paragraph(f"<b>Supervisor:</b> {st.session_state.get('supervisor', '-')}", cell_style)
+        ]
+    ]
+    t_geral = Table(dados_gerais, colWidths=[180, 180, 180])
+    t_geral.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F3F4F6')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#D1D5DB')),
+        ('PADDING', (0,0), (-1,-1), 5),
+    ]))
+    story.append(t_geral)
+    story.append(Spacer(1, 10))
+
+    # Tabela de Manobras
+    story.append(Paragraph("Avanço e Recuperação de Testemunhos", header_style))
+    manobras = buscar_manobras(furo_id)
+
+    if manobras:
+        t_data = [["De (m)", "Até (m)", "Avanço (m)", "Recup (m)", "Recup (%)", "Caixa", "Litologia / Descrição"]]
+        for m in manobras:
+            de, ate, rec, rec_pct, caixa, desc = m[1], m[2], m[3], m[4], m[5], m[8]
+            avanc = round(ate - de, 2)
+            t_data.append([
+                f"{de:.2f}", f"{ate:.2f}", f"{avanc:.2f}", f"{rec:.2f}", f"{rec_pct:.1f}%", str(caixa), Paragraph(desc or "-", cell_style)
+            ])
+            
+        t_manobras = Table(t_data, colWidths=[55, 55, 55, 55, 55, 45, 220])
+        t_manobras.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#9CA3AF')),
+            ('FONTSIZE', (0,0), (-1,-1), 8),
+            ('PADDING', (0,0), (-1,-1), 4),
+        ]))
+        story.append(t_manobras)
+    else:
+        story.append(Paragraph("Nenhuma manobra cadastrada para este furo.", cell_style))
+
+    if obs_fechamento:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("Observações de Fechamento de Turno", header_style))
+        story.append(Paragraph(obs_fechamento, cell_style))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
 # --- ESTADO DA SESSÃO ---
 if "logado" not in st.session_state:
@@ -251,7 +330,8 @@ else:
             "1. Cabeçalho e Empresa",
             "2. Equipe de Campo",
             "3. Registro de Manobra e Testemunho",
-            "4. Dados do Furo & Perfuração"
+            "4. Fechamento de Turno & PDF (DDR)",
+            "5. Dados do Furo & Perfuração"
         ],
         label_visibility="collapsed"
     )
@@ -395,9 +475,47 @@ else:
         else:
             st.info("Nenhuma manobra cadastrada para este furo.")
 
-    # ETAPA 4
-    elif opcao == "4. Dados do Furo & Perfuração":
-        st.title("4. Dados do Furo e Perfuração")
+    # ETAPA 4 - FECHAMENTO DE TURNO & GERADOR DE PDF
+    elif opcao == "4. Fechamento de Turno & PDF (DDR)":
+        st.title("4. Fechamento de Turno e Emissão do BDS")
+        st.caption("Consolidação dos dados do dia, cálculo de produtividade e geração do relatório em PDF.")
+
+        furo_fechamento = st.text_input("Identificação do Furo", value=st.session_state.get("furo_id", "SP-01"))
+        manobras = buscar_manobras(furo_fechamento)
+
+        if manobras:
+            total_avanco = sum([m[2] - m[1] for m in manobras])
+            total_recup = sum([m[3] for m in manobras])
+            total_h_trab = sum([m[6] for m in manobras if m[6] is not None])
+            total_h_parado = sum([m[7] for m in manobras if m[7] is not None])
+            taxa_media = (total_recup / total_avanco * 100) if total_avanco > 0 else 0.0
+
+            st.subheader("📊 Resumo do Turno")
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            col_m1.metric("Avanço Total", f"{total_avanco:.2f} m")
+            col_m2.metric("Recuperação Média", f"{taxa_media:.1f}%")
+            col_m3.metric("Horas Trabalhadas", f"{total_h_trab:.1f} h")
+            col_m4.metric("Horas Paradas", f"{total_h_parado:.1f} h")
+
+            st.divider()
+            
+            obs_fechamento = st.text_area("Observações Finais do Turno / Ocorrências de Campo", placeholder="Ex: Paralisação por chuva das 14h às 15h. Troca de coroa realizada.")
+
+            pdf_bytes = gerar_pdf_boletim(furo_fechamento, obs_fechamento)
+
+            st.download_button(
+                label="📄 Baixar Boletim em PDF (BDS)",
+                data=pdf_bytes,
+                file_name=f"Boletim_{furo_fechamento}_{date.today().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+        else:
+            st.warning(f"Nenhuma manobra encontrada para o furo {furo_fechamento}. Registre manobras na Etapa 3 antes de fechar o turno.")
+
+    # ETAPA 5
+    elif opcao == "5. Dados do Furo & Perfuração":
+        st.title("5. Dados do Furo e Perfuração")
         st.caption("Ajuste manual e dados complementares da perfuração.")
         
         with st.form("form_furo"):
