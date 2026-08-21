@@ -439,7 +439,16 @@ else:
         if manobras_furo:
             dados_tabela = []
             for row in manobras_furo:
-                m_id, de, ate, rec, rec_pct, caixa, h_tr, h_par, desc = row[:9]
+                m_id = row[0]
+                de = row[1] if row[1] is not None else 0.0
+                ate = row[2] if row[2] is not None else 0.0
+                rec = row[3] if row[3] is not None else 0.0
+                rec_pct = row[4] if row[4] is not None else 0.0
+                caixa = row[5]
+                h_tr = row[6] if row[6] is not None else 0.0
+                h_par = row[7] if row[7] is not None else 0.0
+                desc = row[8]
+                
                 avanc = round(ate - de, 2)
                 dados_tabela.append([m_id, de, ate, avanc, rec, rec_pct, caixa, h_tr, h_par, desc])
 
@@ -448,11 +457,6 @@ else:
                 columns=["ID", "De (m)", "Até (m)", "Avanço (m)", "Recup (m)", "Recup (%)", "Caixa", "H. Trab", "H. Parado", "Descrição Litológica"]
             )
             st.dataframe(df_manobras, use_container_width=True)
-
-            col_excluir, col_btn = st.columns([3, 1])
-            with col_excluir:
-                opcoes_manobra = {f"ID #{row[0]} | De {row[1]:.2f}m até {row[2]:.2f}m (Avanço: {row[2]-row[1]:.2f}m)": row[0] for row in manobras_furo}
-                manobra_selecionada = st.selectbox("Selecione a manobra que deseja apagar:", list(opcoes_manobra.keys()))
             
             with col_btn:
                 st.write("")
