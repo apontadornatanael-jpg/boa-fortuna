@@ -1,6 +1,6 @@
 import streamlit as st
 import sqlite3
-from datetime import datetime
+from datetime import datetime, date
 import pandas as pd
 
 # Configuração da página
@@ -17,11 +17,19 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute('''
-        CREATE TABLE IF NOT EXISTS registros (
+        CREATE TABLE IF NOT EXISTS boletins_campo (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            data_registro TEXT NOT NULL,
-            cliente_id TEXT NOT NULL,
-            valor REAL NOT NULL,
+            data_registro TEXT,
+            empresa TEXT,
+            obra_cliente TEXT,
+            cidade_uf TEXT,
+            coordenador TEXT,
+            supervisor TEXT,
+            sondador TEXT,
+            auxiliares TEXT,
+            furo_id TEXT,
+            tipo_sondagem TEXT,
+            profundidade_m REAL,
             observacao TEXT
         )
     ''')
@@ -30,53 +38,86 @@ def init_db():
 
 init_db()
 
-def salvar_registro(cliente, valor, obs):
+def salvar_boletim(empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, prof, obs):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     c.execute('''
-        INSERT INTO registros (data_registro, cliente_id, valor, observacao)
-        VALUES (?, ?, ?, ?)
-    ''', (data_atual, cliente, valor, obs))
+        INSERT INTO boletins_campo 
+        (data_registro, empresa, obra_cliente, cidade_uf, coordenador, supervisor, sondador, auxiliares, furo_id, tipo_sondagem, profundidade_m, observacao)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (data_atual, empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, prof, obs))
     conn.commit()
     conn.close()
 
 def buscar_registros():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute('SELECT cliente_id, valor, observacao, data_registro FROM registros ORDER BY id DESC')
+    c.execute('SELECT furo_id, obra_cliente, cidade_uf, sondador, profundidade_m, data_registro FROM boletins_campo ORDER BY id DESC')
     dados = c.fetchall()
     conn.close()
     return dados
 
-# --- JANELAS MODAIS (POPUPS VIA ST.DIALOG) ---
+# --- JANELAS MODAIS (ST.DIALOG) ---
 
-@st.dialog("➕ Novo Lançamento Financeiro")
-def modal_novo_lancamento():
-    st.write("Preencha os dados do investimento abaixo:")
-    with st.form("form_modal_registro", clear_on_submit=True):
-        cliente = st.text_input("Cliente / Operação", placeholder="Ex: Operação Tesouro Direct")
-        valor = st.number_input("Valor (R$)", min_value=0.0, step=100.0)
-        obs = st.text_area("Observações", placeholder="Detalhes...")
+@st.dialog("📋 Novo Boletim de Campo", width="large")
+def modal_novo_boletim():
+    st.markdown("### 🏢 Cabeçalho de Identificação")
+    
+    with st.form("form_modal_boletim", clear_on_submit=True):
+        # Linha 1: Dados Institucionais e Localização
+        col1, col2 = st.columns(2)
+        with col1:
+            empresa = st.text_input("Nome da Empresa Executora", value="Boa Fortuna Perfurações e Sondagens")
+            obra = st.text_input("Cliente / Nome da Obra", placeholder="Ex: Parque Eólico - Fase 2")
+        with col2:
+            cidade = st.text_input("Cidade / UF", placeholder="Ex: Natal / RN")
+            data_campo = st.date_input("Data do Ensaio", value=date.today())
+
+        st.markdown("---")
+        st.markdown("### 👥 Equipe Responsável")
         
-        btn_confirmar = st.form_submit_button("💾 Salvar Registro")
+        # Linha 2: Responsáveis Técnicos e Operacionais
+        col3, col4 = st.columns(2)
+        with col3:
+            coordenador = st.text_input("Coordenador de Campo", placeholder="Nome do Engenheiro / Coordenador")
+            supervisor = st.text_input("Supervisor / TST", placeholder="Nome do Supervisor")
+        with col4:
+            sondador = st.text_input("Sondador Principal", placeholder="Nome do Sondador")
+            auxiliares = st.text_input("Auxiliares de Sondagem", placeholder="Ex: João Silva, Pedro Santos")
+
+        st.markdown("---")
+        st.markdown("### 📌 Dados do Furo e Perfuração")
+        
+        # Linha 3: Dados Técnicos do Furo
+        col5, col6, col7 = st.columns(3)
+        with col5:
+            furo = st.text_input("Identificação do Furo", placeholder="Ex: SP-01 / SR-02")
+        with col6:
+            tipo_sondagem = st.selectbox("Tipo de Sondagem", ["SPT (A Percussão)", "Rotativa", "Mista", "Poço de Inspeção"])
+        with col7:
+            profundidade = st.number_input("Profundidade Final (m)", min_value=0.0, step=0.5)
+
+        obs = st.text_area("Observações Gerais / Nível d'Água (NA)", placeholder="Registros de NA, paralisação ou anomalias do terreno...")
+        
+        btn_confirmar = st.form_submit_button("💾 Salvar Boletim de Campo", use_container_width=True)
         if btn_confirmar:
-            if cliente:
-                salvar_registro(cliente, valor, obs)
-                st.success(f"Lançamento de **{cliente}** gravado!")
+            if furo and obra:
+                salvar_boletim(empresa, obra, cidade, coordenador, supervisor, sondador, auxiliares, furo, tipo_sondagem, profundidade, obs)
+                st.success(f"✅ Boletim do furo **{furo}** salvo com sucesso!")
                 st.rerun()
             else:
-                st.warning("Preencha o campo Cliente / Operação.")
+                st.warning("⚠️ Preencha os campos obrigatórios: Nome da Obra e Identificação do Furo.")
 
-@st.dialog("📊 Histórico Completo")
+@st.dialog("📊 Histórico de Registros")
 def modal_historico():
-    st.write("Relação de todas as transações cadastradas:")
+    st.write("Registros salvos no banco de dados:")
     registros = buscar_registros()
     if registros:
-        df = pd.DataFrame(registros, columns=["Cliente/Operação", "Valor (R$)", "Observação", "Data/Hora"])
+        df = pd.DataFrame(registros, columns=["Furo", "Obra", "Cidade/UF", "Sondador", "Prof. (m)", "Data/Hora"])
         st.dataframe(df, use_container_width=True)
     else:
-        st.info("Nenhum lançamento encontrado.")
+        st.info("Nenhum registro encontrado.")
 
 # --- ESTADO DA SESSÃO ---
 if "logado" not in st.session_state:
@@ -102,7 +143,7 @@ if not st.session_state.logado:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-bottom: 0px;'>📈 Boa Fortuna</h1>", unsafe_allow_html=True)
-        st.markdown("<h4 style='text-align: center; color: #8B5A2B; margin-top: -5px; margin-bottom: 25px;'>INVESTIMENTO</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='text-align: center; color: #8B5A2B; margin-top: -5px; margin-bottom: 25px;'>INVESTIMENTO & SONDAREM</h4>", unsafe_allow_html=True)
 
         with st.form("login_form"):
             user_input = st.text_input("Usuário", placeholder="Digite seu usuário", label_visibility="collapsed")
@@ -116,7 +157,7 @@ if not st.session_state.logado:
                 else:
                     st.error("Usuário ou senha incorretos.")
 
-# --- PAINEL PRINCIPAL (COM BOTOES QUE ABREM JANELAS) ---
+# --- PAINEL PRINCIPAL ---
 else:
     st.markdown("""
         <style>
@@ -130,29 +171,29 @@ else:
         st.session_state.logado = False
         st.rerun()
 
-    st.title("💼 Boa Fortuna Investimento")
-    st.markdown("Selecione uma opção abaixo para abrir em uma nova janela modal:")
+    # Cabeçalho Principal da Tela Interna
+    st.title("🚜 Boa Fortuna - Diário de Campo")
+    st.markdown("Gerenciamento de boletins de sondagem geotécnica e perfuração.")
 
     st.divider()
 
-    # Painel de Botões que abrem as Janelas Modais
+    # Botões de Ação
     col_btn1, col_btn2 = st.columns(2)
 
     with col_btn1:
-        if st.button("➕ Novo Lançamento", use_container_width=True):
-            modal_novo_lancamento()
+        if st.button("📝 Preencher Novo Boletim", use_container_width=True):
+            modal_novo_boletim()
 
     with col_btn2:
-        if st.button("📊 Ver Histórico", use_container_width=True):
+        if st.button("📊 Ver Histórico de Furos", use_container_width=True):
             modal_historico()
 
     st.divider()
     
-    # Exibição resumida na tela principal
-    st.subheader("📌 Resumo Recente")
+    st.subheader("📌 Últimos Furos Registrados")
     registros = buscar_registros()
     if registros:
-        df = pd.DataFrame(registros[:3], columns=["Cliente/Operação", "Valor (R$)", "Observação", "Data/Hora"])
+        df = pd.DataFrame(registros[:5], columns=["Furo", "Obra", "Cidade/UF", "Sondador", "Prof. (m)", "Data/Hora"])
         st.dataframe(df, use_container_width=True)
     else:
-        st.info("Nenhum registro cadastrado.")
+        st.info("Nenhum furo registrado até o momento.")
