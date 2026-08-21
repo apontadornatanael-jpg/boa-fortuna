@@ -29,7 +29,7 @@ def init_db():
             supervisor TEXT,
             sondador TEXT,
             auxiliares TEXT,
-            furo_id TEXT,
+            furo_id TEXT UNIQUE,
             tipo_sondagem TEXT,
             profundidade_m REAL,
             observacao TEXT
@@ -58,6 +58,31 @@ def init_db():
 
 init_db()
 
+def atualizar_ou_inserir_boletim_automatico(furo_id, prof_atingida):
+    """Vincula a manobra ao histórico criando/atualizando a profundidade final do furo."""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    
+    c.execute('SELECT id FROM boletins_campo WHERE furo_id = ?', (furo_id,))
+    existe = c.fetchone()
+    
+    if existe:
+        c.execute('''
+            UPDATE boletins_campo 
+            SET profundidade_m = max(profundidade_m, ?), data_registro = ? 
+            WHERE furo_id = ?
+        ''', (prof_atingida, data_atual, furo_id))
+    else:
+        c.execute('''
+            INSERT INTO boletins_campo 
+            (data_registro, empresa, obra_cliente, cidade_uf, coordenador, supervisor, sondador, auxiliares, furo_id, tipo_sondagem, profundidade_m, observacao)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (data_atual, "Boa Fortuna Perfurações", "Não informada", "-", "-", "-", "-", "-", furo_id, "Rotativa / Mista", prof_atingida, "Criado via registro de manobras"))
+    
+    conn.commit()
+    conn.close()
+
 def salvar_boletim(empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, prof, obs):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -66,6 +91,11 @@ def salvar_boletim(empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, 
         INSERT INTO boletins_campo 
         (data_registro, empresa, obra_cliente, cidade_uf, coordenador, supervisor, sondador, auxiliares, furo_id, tipo_sondagem, profundidade_m, observacao)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(furo_id) DO UPDATE SET
+            empresa=excluded.empresa, obra_cliente=excluded.obra_cliente, cidade_uf=excluded.cidade_uf,
+            coordenador=excluded.coordenador, supervisor=excluded.supervisor, sondador=excluded.sondador,
+            auxiliares=excluded.auxiliares, tipo_sondagem=excluded.tipo_sondagem, profundidade_m=excluded.profundidade_m,
+            observacao=excluded.observacao, data_registro=excluded.data_registro
     ''', (data_atual, empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, prof, obs))
     conn.commit()
     conn.close()
@@ -81,6 +111,9 @@ def salvar_manobra(furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario,
     ''', (furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario, motivo, desc, data_atual))
     conn.commit()
     conn.close()
+    
+    # Atualiza automaticamente o histórico do boletim com a maior profundidade
+    atualizar_ou_inserir_boletim_automatico(furo, ate)
 
 def deletar_manobra(manobra_id):
     conn = sqlite3.connect(DB_NAME)
@@ -285,7 +318,7 @@ else:
             if btn_salvar_manobra:
                 if ate_m > de_m:
                     salvar_manobra(furo_atual, de_m, ate_m, recup_m, taxa_recup, num_caixa, horas_trab, horas_parado, horario, motivo_parada, desc_litologica)
-                    st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m ({avancamento:.2f}m de avanço) salva para o furo **{furo_atual}**!")
+                    st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m ({avancamento:.2f}m de avanço) salva e sincronizada com o histórico do furo **{furo_atual}**!")
                     st.rerun()
                 else:
                     st.error("O valor final 'Até (m)' deve ser maior que o valor inicial 'De (m)'.")
@@ -357,23 +390,22 @@ else:
                         st.session_state.get("auxiliares", "-"),
                         furo, tipo_sondagem, profundidade, obs
                     )
-                    st.success(f"Boletim do furo {furo} gravado com sucesso.")
+                    st.success(f"Boletim do furo {furo} atualizado e gravado no histórico.")
                 else:
                     st.warning("Informe a identificação do furo antes de gravar.")
 
-    # ETAPA 5: HISTÓRICO DE BOLETIM APRIMORADO
+    # ETAPA 5: HISTÓRICO INTEGRADO COM MANOBRAS
     elif opcao == "5. Histórico de Boletins":
-        st.title("5. Painel Geral de Boletins e Perfurações")
-        st.caption("Consulta centralizada, detalhamento técnico por furo e exportação de relatórios.")
+        st.title("5. Painel Integrado de Boletins e Perfurações")
+        st.caption("Conexão direta entre cadastros do boletim e o avanço físico das manobras.")
 
         registros = buscar_registros()
 
         if registros:
-            # Converte dados em DataFrame
             cols_boletim = ["ID", "Furo", "Obra", "Cidade/UF", "Sondador", "Prof. Final (m)", "Tipo", "Empresa", "Coordenador", "Supervisor", "Auxiliares", "Observações", "Data/Hora"]
             df_boletins = pd.DataFrame(registros, columns=cols_boletim)
 
-            # Métricas no topo do Histórico
+            # Métricas Gerais
             col_m1, col_m2, col_m3 = st.columns(3)
             col_m1.metric("Total de Furos Registrados", len(df_boletins))
             col_m2.metric("Metragem Total Perfurada", f"{df_boletins['Prof. Final (m)'].sum():.2f} m")
@@ -381,38 +413,24 @@ else:
 
             st.divider()
 
-            # Campo de Busca e Tabela Resumida
-            termo_busca = st.text_input("🔍 Buscar por Furo, Obra ou Sondador:", placeholder="Digite o código do furo ou nome do cliente...")
-            
-            if termo_busca:
-                df_filtrado = df_boletins[
-                    df_boletins['Furo'].str.contains(termo_busca, case=False, na=False) |
-                    df_boletins['Obra'].str.contains(termo_busca, case=False, na=False) |
-                    df_boletins['Sondador'].str.contains(termo_busca, case=False, na=False)
-                ]
-            else:
-                df_filtrado = df_boletins
-
-            st.subheader("Resumo dos Boletins Registrados")
+            # Tabela Resumo dos Boletins
+            st.subheader("Boletins Salvos e Sincronizados")
             st.dataframe(
-                df_filtrado[["Furo", "Obra", "Cidade/UF", "Sondador", "Tipo", "Prof. Final (m)", "Data/Hora"]],
+                df_boletins[["Furo", "Obra", "Cidade/UF", "Sondador", "Tipo", "Prof. Final (m)", "Data/Hora"]],
                 use_container_width=True
             )
 
-            # Exportação CSV
-            csv_dados = df_filtrado.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Baixar Relatório Resumido (CSV)", data=csv_dados, file_name="boletins_sondagem.csv", mime="text/csv")
-
             st.divider()
 
-            # Detalhamento Furo a Furo
-            st.subheader("📋 Detalhamento do Boletim Selecionado")
-            furo_selecionado = st.selectbox("Selecione um furo para ver o boletim completo e suas manobras:", df_boletins['Furo'].unique())
+            # Seleção do Furo para Análise Completa
+            st.subheader("🔗 Visão Integrada do Furo")
+            furo_selecionado = st.selectbox("Selecione um furo para carregar o histórico completo de manobras e amostras:", df_boletins['Furo'].unique())
 
             if furo_selecionado:
                 info_furo = df_boletins[df_boletins['Furo'] == furo_selecionado].iloc[0]
-                
-                # Ficha do Furo em Cards/Colunas
+                manobras_furo = buscar_manobras(furo_selecionado)
+
+                # Cabeçalho Técnico do Furo Selecionado
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     st.write(f"**Empresa:** {info_furo['Empresa']}")
@@ -424,28 +442,41 @@ else:
                     st.write(f"**Supervisor:** {info_furo['Supervisor']}")
                 with c3:
                     st.write(f"**Tipo de Sondagem:** {info_furo['Tipo']}")
-                    st.write(f"**Profundidade Final:** {info_furo['Prof. Final (m)']} m")
-                    st.write(f"**Data de Registro:** {info_furo['Data/Hora']}")
+                    st.write(f"**Profundidade do Furo:** {info_furo['Prof. Final (m)']} m")
+                    st.write(f"**Total de Manobras:** {len(manobras_furo)}")
 
                 if info_furo['Observações']:
-                    st.info(f"**Observações:** {info_furo['Observações']}")
+                    st.info(f"**Observações de Campo:** {info_furo['Observações']}")
 
-                # Tabela de Manobras vinculadas ao Furo
-                manobras_furo = buscar_manobras(furo_selecionado)
+                # Tabela Consolidada de Manobras do Furo
                 if manobras_furo:
                     dados_m = []
+                    total_recup = 0
+                    total_avanc = 0
+
                     for row in manobras_furo:
                         m_id, de, ate, rec, rec_pct, caixa, h_tr, h_par, desc = row
                         avanc = round(ate - de, 2)
-                        dados_m.append([m_id, de, ate, avanc, rec, rec_pct, caixa, h_tr, h_par, desc])
+                        total_recup += rec
+                        total_avanc += avanc
+                        dados_m.append([m_id, f"{de:.2f}", f"{ate:.2f}", f"{avanc:.2f}", f"{rec:.2f}", f"{rec_pct:.1f}%", caixa, h_tr, h_par, desc])
 
                     df_m_furo = pd.DataFrame(
                         dados_m, 
                         columns=["ID", "De (m)", "Até (m)", "Avanço (m)", "Recup (m)", "Recup (%)", "Caixa", "H. Trab", "H. Parado", "Descrição Litológica"]
                     )
-                    st.markdown(f"##### Manobras do Furo {furo_selecionado}")
+                    
+                    st.markdown(f"##### Tabela de Manobras e Testemunhos ({furo_selecionado})")
                     st.dataframe(df_m_furo, use_container_width=True)
+
+                    # Resumo Estatístico do Furo
+                    taxa_media_rec = (total_recup / total_avanc * 100) if total_avanc > 0 else 0
+                    st.success(f"**Resumo do Furo {furo_selecionado}:** Avanço Total de **{total_avanc:.2f} m** | Amostra Recuperada: **{total_recup:.2f} m** ({taxa_media_rec:.1f}% de taxa média)")
+                    
+                    # Botão para baixar dados específicos do furo
+                    csv_furo = df_m_furo.to_csv(index=False).encode('utf-8')
+                    st.download_button(f"📥 Exportar Manobras do Furo {furo_selecionado} (CSV)", data=csv_furo, file_name=f"manobras_{furo_selecionado}.csv", mime="text/csv")
                 else:
-                    st.warning("Nenhuma manobra individual foi vinculada a este furo.")
+                    st.warning("Este furo está registrado no cabeçalho, mas ainda não possui manobras detalhadas cadastradas.")
         else:
             st.info("Nenhum boletim registrado no banco de dados.")
