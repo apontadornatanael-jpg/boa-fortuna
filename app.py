@@ -4,6 +4,8 @@ from datetime import datetime, date
 import pandas as pd
 from PIL import Image
 import io
+import plotly.express as px
+import plotly.graph_objects as go
 
 # Configuração da página
 st.set_page_config(page_title="Boa Fortuna - Sistema de Sondagem", layout="wide")
@@ -473,9 +475,9 @@ else:
         else:
             st.info("Nenhuma manobra cadastrada para este furo.")
 
-    # ETAPA 4 - FECHAMENTO & RELATÓRIO
+    # ETAPA 4 - FECHAMENTO & RELATÓRIO / DASHBOARD
     elif opcao == "4. Fechamento de Turno & Relatório":
-        st.title("4. Fechamento de Turno e Relatório de Campo")
+        st.title("4. Fechamento de Turno & Dashboard Executivo")
         st.caption("Consolidação dos dados do dia, métricas de avanço e emissão do boletim.")
 
         furo_fechamento = st.text_input("Identificação do Furo", value=st.session_state.get("furo_id", "SP-01"))
@@ -488,7 +490,8 @@ else:
             total_h_parado = sum([m[7] for m in manobras if m[7] is not None])
             taxa_media = (total_recup / total_avanco * 100) if total_avanco > 0 else 0.0
 
-            st.subheader("📊 Resumo do Turno")
+            # --- CARDS DE MÉTRICAS PRINCIPAIS ---
+            st.subheader("📊 Métricas Consolidadas")
             col_m1, col_m2, col_m3, col_m4 = st.columns(4)
             col_m1.metric("Avanço Total", f"{total_avanco:.2f} m")
             col_m2.metric("Recuperação Média", f"{taxa_media:.1f}%")
@@ -496,20 +499,83 @@ else:
             col_m4.metric("Horas Paradas", f"{total_h_parado:.1f} h")
 
             st.divider()
-            
+
+            # --- DASHBOARD VISUAL (PLOTLY) ---
+            st.subheader("📈 Análise Gráfica da Perfurabilidade")
+
+            # Montagem do DataFrame para os gráficos
+            dados_grafico = []
+            for m in manobras:
+                de, ate, rec, rec_pct = m[1], m[2], m[3], m[4]
+                caixa, h_tr, h_par, desc = m[5], m[6], m[7], m[8]
+                avanc = round(ate - de, 2)
+                intervalo = f"{de:.1f}m - {ate:.1f}m"
+                dados_grafico.append({
+                    "Intervalo": intervalo,
+                    "De (m)": de,
+                    "Até (m)": ate,
+                    "Avanço (m)": avanc,
+                    "Recuperação (m)": rec,
+                    "Recuperação (%)": rec_pct,
+                    "Caixa": caixa,
+                    "Horas Trab": h_tr or 0,
+                    "Horas Parado": h_par or 0,
+                    "Litologia": desc or "Não informada"
+                })
+
+            df_g = pd.DataFrame(dados_grafico)
+
+            col_g1, col_g2 = st.columns(2)
+
+            with col_g1:
+                # Gráfico 1: Avanço vs Recuperação por Manobra
+                fig_avanco = px.bar(
+                    df_g,
+                    x="Intervalo",
+                    y=["Avanço (m)", "Recuperação (m)"],
+                    barmode="group",
+                    title="Avanço vs Recuperação por Manobra (m)",
+                    labels={"value": "Metros", "variable": "Métrica"},
+                    color_discrete_sequence=["#1E3A8A", "#10B981"]
+                )
+                fig_avanco.update_layout(margin=dict(l=20, r=20, t=40, b=20), legend=dict(orientation="h", y=1.1))
+                st.plotly_chart(fig_avanco, use_container_width=True)
+
+            with col_g2:
+                # Gráfico 2: Distribuição das Horas (Trabalhadas vs Paradas)
+                fig_horas = px.pie(
+                    names=["Horas Trabalhadas", "Horas Paradas"],
+                    values=[total_h_trab, total_h_parado],
+                    title="Eficiência Operacional (Horas)",
+                    hole=0.4,
+                    color_discrete_sequence=["#2563EB", "#EF4444"]
+                )
+                fig_horas.update_layout(margin=dict(l=20, r=20, t=40, b=20))
+                st.plotly_chart(fig_horas, use_container_width=True)
+
+            # --- TABELA EXECUTIVA ---
+            st.subheader("📋 Log Detalhado das Manobras")
+            st.dataframe(
+                df_g[["Intervalo", "Avanço (m)", "Recuperação (m)", "Recuperação (%)", "Caixa", "Litologia"]],
+                use_container_width=True
+            )
+
+            st.divider()
+
+            # --- RELATÓRIO E FECHAMENTO ---
             obs_fechamento = st.text_area("Observações Finais do Turno / Ocorrências de Campo", placeholder="Ex: Paralisação por chuva das 14h às 15h. Troca de coroa realizada.")
 
             html_conteudo = gerar_html_boletim(furo_fechamento, obs_fechamento)
 
             st.download_button(
-                label="🌐 Baixar Boletim de Sondagem (HTML / Para Impressão PDF)",
+                label="🌐 Baixar Boletim Oficial de Sondagem (HTML / PDF)",
                 data=html_conteudo,
                 file_name=f"Boletim_{furo_fechamento}_{date.today().strftime('%Y%m%d')}.html",
                 mime="text/html",
                 use_container_width=True
             )
         else:
-            st.warning(f"Nenhuma manobra encontrada para o furo {furo_fechamento}. Registre manobras na Etapa 3 antes de fechar o turno.")
+            st.warning(f"Nenhuma manobra encontrada para o furo {furo_fechamento}. Registre manobras na Etapa 3 para gerar o dashboard.")
 
     # ETAPA 5
     elif opcao == "5. Dados do Furo & Perfuração":
