@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime, date
 import pandas as pd
 from PIL import Image
+import io
 
 # Configuração da página
 st.set_page_config(page_title="Boa Fortuna - Sistema de Sondagem", layout="wide")
@@ -35,7 +36,7 @@ def init_db():
             observacao TEXT
         )
     ''')
-    # Tabela de Manobras e Testemunhos
+    # Tabela de Manobras e Testemunhos (Com colunas de Fotos tipo BLOB)
     c.execute('''
         CREATE TABLE IF NOT EXISTS manobras_testemunho (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,13 +51,32 @@ def init_db():
             horario TEXT,
             motivo_parada TEXT,
             descricao_litologica TEXT,
-            data_registro TEXT
+            data_registro TEXT,
+            foto1 BLOB,
+            foto2 BLOB,
+            foto3 BLOB
         )
     ''')
+    
+    # Migração simples para bancos já criados sem as colunas de foto
+    c.execute("PRAGMA table_info(manobras_testemunho)")
+    colunas = [col[1] for col in c.fetchall()]
+    for col_foto in ["foto1", "foto2", "foto3"]:
+        if col_foto not in colunas:
+            c.execute(f"ALTER TABLE manobras_testemunho ADD COLUMN {col_foto} BLOB")
+            
     conn.commit()
     conn.close()
 
 init_db()
+
+def pil_para_bytes(img_pil):
+    """Converte objeto PIL.Image em bytes para gravação no SQLite."""
+    if img_pil is None:
+        return None
+    buffer = io.BytesIO()
+    img_pil.save(buffer, format="JPEG")
+    return buffer.getvalue()
 
 def atualizar_ou_inserir_boletim_automatico(furo_id, prof_atingida):
     """Vincula a manobra ao histórico criando/atualizando a profundidade final do furo."""
@@ -100,19 +120,24 @@ def salvar_boletim(empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, 
     conn.commit()
     conn.close()
 
-def salvar_manobra(furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario, motivo, desc):
+def salvar_manobra(furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario, motivo, desc, fotos_pil=None):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    
+    # Processa as fotos
+    f1 = pil_para_bytes(fotos_pil[0]) if fotos_pil and len(fotos_pil) > 0 else None
+    f2 = pil_para_bytes(fotos_pil[1]) if fotos_pil and len(fotos_pil) > 1 else None
+    f3 = pil_para_bytes(fotos_pil[2]) if fotos_pil and len(fotos_pil) > 2 else None
+
     c.execute('''
         INSERT INTO manobras_testemunho
-        (furo_id, de_m, ate_m, recup_m, taxa_recup_pct, num_caixa, horas_trab, horas_parado, horario, motivo_parada, descricao_litologica, data_registro)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario, motivo, desc, data_atual))
+        (furo_id, de_m, ate_m, recup_m, taxa_recup_pct, num_caixa, horas_trab, horas_parado, horario, motivo_parada, descricao_litologica, data_registro, foto1, foto2, foto3)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario, motivo, desc, data_atual, f1, f2, f3))
     conn.commit()
     conn.close()
     
-    # Atualiza automaticamente o histórico do boletim com a maior profundidade
     atualizar_ou_inserir_boletim_automatico(furo, ate)
 
 def deletar_manobra(manobra_id):
@@ -134,7 +159,7 @@ def buscar_manobras(furo_id=None):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     if furo_id:
-        c.execute('SELECT id, de_m, ate_m, recup_m, taxa_recup_pct, num_caixa, horas_trab, horas_parado, descricao_litologica FROM manobras_testemunho WHERE furo_id = ? ORDER BY id ASC', (furo_id,))
+        c.execute('SELECT id, de_m, ate_m, recup_m, taxa_recup_pct, num_caixa, horas_trab, horas_parado, descricao_litologica, foto1, foto2, foto3 FROM manobras_testemunho WHERE furo_id = ? ORDER BY id ASC', (furo_id,))
     else:
         c.execute('SELECT id, furo_id, de_m, ate_m, recup_m, taxa_recup_pct, num_caixa, descricao_litologica, data_registro FROM manobras_testemunho ORDER BY id DESC')
     dados = c.fetchall()
@@ -317,8 +342,8 @@ else:
 
             if btn_salvar_manobra:
                 if ate_m > de_m:
-                    salvar_manobra(furo_atual, de_m, ate_m, recup_m, taxa_recup, num_caixa, horas_trab, horas_parado, horario, motivo_parada, desc_litologica)
-                    st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m ({avancamento:.2f}m de avanço) salva e sincronizada com o histórico do furo **{furo_atual}**!")
+                    salvar_manobra(furo_atual, de_m, ate_m, recup_m, taxa_recup, num_caixa, horas_trab, horas_parado, horario, motivo_parada, desc_litologica, fotos_manobra_pil)
+                    st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m salva com sucesso e vinculada ao furo **{furo_atual}**!")
                     st.rerun()
                 else:
                     st.error("O valor final 'Até (m)' deve ser maior que o valor inicial 'De (m)'.")
@@ -330,7 +355,7 @@ else:
         if manobras_furo:
             dados_tabela = []
             for row in manobras_furo:
-                m_id, de, ate, rec, rec_pct, caixa, h_tr, h_par, desc = row
+                m_id, de, ate, rec, rec_pct, caixa, h_tr, h_par, desc = row[:9]
                 avanc = round(ate - de, 2)
                 dados_tabela.append([m_id, de, ate, avanc, rec, rec_pct, caixa, h_tr, h_par, desc])
 
@@ -394,10 +419,10 @@ else:
                 else:
                     st.warning("Informe a identificação do furo antes de gravar.")
 
-    # ETAPA 5: HISTÓRICO INTEGRADO COM MANOBRAS
+    # ETAPA 5: HISTÓRICO INTEGRADO COM MANOBRAS E REGISTRO FOTOGRÁFICO
     elif opcao == "5. Histórico de Boletins":
         st.title("5. Painel Integrado de Boletins e Perfurações")
-        st.caption("Conexão direta entre cadastros do boletim e o avanço físico das manobras.")
+        st.caption("Conexão direta entre cadastros do boletim, avanço físico e galeria de fotos de testemunho.")
 
         registros = buscar_registros()
 
@@ -424,7 +449,7 @@ else:
 
             # Seleção do Furo para Análise Completa
             st.subheader("🔗 Visão Integrada do Furo")
-            furo_selecionado = st.selectbox("Selecione um furo para carregar o histórico completo de manobras e amostras:", df_boletins['Furo'].unique())
+            furo_selecionado = st.selectbox("Selecione um furo para carregar o histórico completo de manobras e fotos:", df_boletins['Furo'].unique())
 
             if furo_selecionado:
                 info_furo = df_boletins[df_boletins['Furo'] == furo_selecionado].iloc[0]
@@ -455,7 +480,7 @@ else:
                     total_avanc = 0
 
                     for row in manobras_furo:
-                        m_id, de, ate, rec, rec_pct, caixa, h_tr, h_par, desc = row
+                        m_id, de, ate, rec, rec_pct, caixa, h_tr, h_par, desc = row[:9]
                         avanc = round(ate - de, 2)
                         total_recup += rec
                         total_avanc += avanc
@@ -476,6 +501,29 @@ else:
                     # Botão para baixar dados específicos do furo
                     csv_furo = df_m_furo.to_csv(index=False).encode('utf-8')
                     st.download_button(f"📥 Exportar Manobras do Furo {furo_selecionado} (CSV)", data=csv_furo, file_name=f"manobras_{furo_selecionado}.csv", mime="text/csv")
+                    
+                    st.divider()
+
+                    # Galeria de Fotos Gravadas no Banco
+                    st.subheader("📷 Galeria Fotográfica das Manobras")
+                    tem_foto = False
+
+                    for row in manobras_furo:
+                        m_id, de, ate = row[0], row[1], row[2]
+                        fotos_blobs = [row[9], row[10], row[11]]
+                        fotos_blobs = [f for f in fotos_blobs if f is not None]
+
+                        if fotos_blobs:
+                            tem_foto = True
+                            st.markdown(f"**Manobra ID #{m_id}** — De **{de:.2f}m** até **{ate:.2f}m**")
+                            cols_foto = st.columns(len(fotos_blobs))
+                            for idx, f_blob in enumerate(fotos_blobs):
+                                img = Image.open(io.BytesIO(f_blob))
+                                cols_foto[idx].image(img, caption=f"Foto {idx+1} (Manobra {de:.2f}m-{ate:.2f}m)", use_container_width=True)
+
+                    if not tem_foto:
+                        st.info("Nenhuma foto cadastrada para as manobras deste furo.")
+
                 else:
                     st.warning("Este furo está registrado no cabeçalho, mas ainda não possui manobras detalhadas cadastradas.")
         else:
