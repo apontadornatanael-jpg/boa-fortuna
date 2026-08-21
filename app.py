@@ -69,6 +69,11 @@ def pil_para_bytes(img_pil):
     img_pil.save(buffer, format="JPEG")
     return buffer.getvalue()
 
+def bytes_para_pil(dados_blob):
+    if dados_blob is None:
+        return None
+    return Image.open(io.BytesIO(dados_blob))
+
 def sincronizar_boletim_automatico(furo_id, prof_atingida):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -559,6 +564,27 @@ else:
                 df_g[["Intervalo", "Avanço (m)", "Recuperação (m)", "Recuperação (%)", "Caixa", "Litologia"]],
                 use_container_width=True
             )
+
+            st.divider()
+
+            # --- REGISTRO FOTOGRÁFICO DE REGISTROS SALVOS ---
+            st.subheader("📸 Registros Fotográficos dos Testemunhos e Caixas")
+            
+            tem_fotos = False
+            for m in manobras:
+                f1_blob, f2_blob, f3_blob = m[9], m[10], m[11]
+                fotos_lista = [bytes_para_pil(f) for f in [f1_blob, f2_blob, f3_blob] if f is not None]
+                
+                if fotos_lista:
+                    tem_fotos = True
+                    st.markdown(f"**Manobra {m[1]:.2f}m a {m[2]:.2f}m (Caixa {m[5]})**")
+                    cols_fotos = st.columns(len(fotos_lista))
+                    for idx, img in enumerate(fotos_lista):
+                        with cols_fotos[idx]:
+                            st.image(img, use_column_width=True)
+            
+            if not tem_fotos:
+                st.info("Nenhuma foto cadastrada para as manobras deste furo.")
 
             st.divider()
 
