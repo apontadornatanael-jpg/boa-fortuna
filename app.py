@@ -16,6 +16,7 @@ DB_NAME = "boafortuna_dados.db"
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    # Tabela de Boletins
     c.execute('''
         CREATE TABLE IF NOT EXISTS boletins_campo (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,6 +32,24 @@ def init_db():
             tipo_sondagem TEXT,
             profundidade_m REAL,
             observacao TEXT
+        )
+    ''')
+    # Tabela de Manobras e Testemunhos
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS manobras_testemunho (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            furo_id TEXT NOT NULL,
+            de_m REAL,
+            ate_m REAL,
+            recup_m REAL,
+            taxa_recup_pct REAL,
+            num_caixa TEXT,
+            horas_trab REAL,
+            horas_parado REAL,
+            horario TEXT,
+            motivo_parada TEXT,
+            descricao_litologica TEXT,
+            data_registro TEXT
         )
     ''')
     conn.commit()
@@ -50,10 +69,33 @@ def salvar_boletim(empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, 
     conn.commit()
     conn.close()
 
+def salvar_manobra(furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario, motivo, desc):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    c.execute('''
+        INSERT INTO manobras_testemunho
+        (furo_id, de_m, ate_m, recup_m, taxa_recup_pct, num_caixa, horas_trab, horas_parado, horario, motivo_parada, descricao_litologica, data_registro)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario, motivo, desc, data_atual))
+    conn.commit()
+    conn.close()
+
 def buscar_registros():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute('SELECT furo_id, obra_cliente, cidade_uf, sondador, profundidade_m, tipo_sondagem, data_registro FROM boletins_campo ORDER BY id DESC')
+    dados = c.fetchall()
+    conn.close()
+    return dados
+
+def buscar_manobras(furo_id=None):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    if furo_id:
+        c.execute('SELECT de_m, ate_m, recup_m, taxa_recup_pct, num_caixa, horas_trab, horas_parado, descricao_litologica FROM manobras_testemunho WHERE furo_id = ? ORDER BY id ASC', (furo_id,))
+    else:
+        c.execute('SELECT furo_id, de_m, ate_m, recup_m, taxa_recup_pct, num_caixa, descricao_litologica, data_registro FROM manobras_testemunho ORDER BY id DESC')
     dados = c.fetchall()
     conn.close()
     return dados
@@ -101,25 +143,14 @@ if not st.session_state.logado:
 else:
     st.markdown("""
         <style>
-        /* Estilização Geral */
         .stApp { background-color: #F8F9FA; }
         div[data-testid="stSidebar"] { background-color: #D2B48C; }
-        
-        /* Ajuste dos títulos */
         h1, h2, h3 { font-family: 'Segoe UI', sans-serif; color: #1E3A8A; font-weight: 600; }
-        
-        /* Botões Padrão */
         div.stButton > button {
-            background-color: #1E3A8A !important;
-            color: #ffffff !important;
-            border-radius: 4px !important;
-            border: none !important;
-            font-weight: 500 !important;
+            background-color: #1E3A8A !important; color: #ffffff !important;
+            border-radius: 4px !important; border: none !important; font-weight: 500 !important;
         }
-        div.stButton > button:hover {
-            background-color: #2563EB !important;
-        }
-        
+        div.stButton > button:hover { background-color: #2563EB !important; }
         #MainMenu, footer, header { visibility: hidden; }
         </style>
     """, unsafe_allow_html=True)
@@ -136,8 +167,9 @@ else:
         [
             "1. Cabeçalho e Empresa",
             "2. Equipe de Campo",
-            "3. Dados do Furo & Perfuração",
-            "4. Histórico de Boletins"
+            "3. Registro de Manobra e Testemunho",
+            "4. Dados do Furo & Perfuração",
+            "5. Histórico de Boletins"
         ],
         label_visibility="collapsed"
     )
@@ -181,8 +213,76 @@ else:
 
             st.form_submit_button("Salvar Etapa 2")
 
-    # ETAPA 3
-    elif opcao == "3. Dados do Furo & Perfuração":
+    # ETAPA 3: REGISTRO DE MANOBRA E TESTEMUNHO
+    elif opcao == "3. Registro de Manobra e Testemunho":
+        st.title("2. Registro de Manobra e Testemunho")
+        st.caption("Lançamento do avanço, recuperação da amostra, caixas e registro fotográfico.")
+        
+        furo_atual = st.text_input("Identificação do Furo", value=st.session_state.get("furo_id", "SP-01"))
+
+        with st.form("form_manobra"):
+            # Linha 1: Métricas de Perfuração
+            col1, col2, col3, col4, col5, col6 = st.columns(6)
+            with col1:
+                de_m = st.number_input("De (m)", min_value=0.0, step=0.5, value=0.0)
+            with col2:
+                ate_m = st.number_input("Até (m)", min_value=0.0, step=0.5, value=1.50)
+            with col3:
+                recup_m = st.number_input("Recup. (m)", min_value=0.0, step=0.1, value=1.50)
+            with col4:
+                num_caixa = st.text_input("Nº da Caixa", value="01")
+            with col5:
+                horas_trab = st.number_input("Horas Trab. (h)", min_value=0.0, step=0.5, value=1.0)
+            with col6:
+                horas_parado = st.number_input("Horas Parado (h)", min_value=0.0, step=0.5, value=0.0)
+
+            # Cálculo automático de avanço e taxa de recuperação
+            avancamento = ate_m - de_m
+            taxa_recup = (recup_m / avancamento * 100) if avancamento > 0 else 0.0
+            
+            st.info(f"**Avanço da Manobra:** {avancamento:.2f} m | **Taxa de Recuperação:** {taxa_recup:.1f}%")
+
+            # Linha 2: Horários e Detalhes Litológicos
+            col7, col8, col9 = st.columns([1, 1, 2])
+            with col7:
+                horario = st.text_input("Horário", placeholder="Ex: 08:00 - 09:30")
+            with col8:
+                motivo_parada = st.text_input("Motivo Parada", value="Nenhuma")
+            with col9:
+                desc_litologica = st.text_input("Descrição Litológica / Observações", placeholder="Ex: Solo residual, rocha alterada...")
+
+            st.markdown("---")
+            st.subheader("Registro Fotográfico da Manobra (Até 3 fotos)")
+            
+            # Abas para Upload ou Captura pela Câmera
+            tab_galeria, tab_camera = st.tabs(["Galeria", "Câmera"])
+            
+            with tab_galeria:
+                fotos_upload = st.file_uploader("Selecione até 3 imagens", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
+            
+            with tab_camera:
+                foto_cam = st.camera_input("Tirar foto da caixa/testemunho")
+
+            btn_salvar_manobra = st.form_submit_button("Adicionar Manobra", use_container_width=True)
+
+            if btn_salvar_manobra:
+                if ate_m > de_m:
+                    salvar_manobra(furo_atual, de_m, ate_m, recup_m, taxa_recup, num_caixa, horas_trab, horas_parado, horario, motivo_parada, desc_litologica)
+                    st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m salva com sucesso.")
+                else:
+                    st.warning("O valor final 'Até (m)' deve ser maior que o valor inicial 'De (m)'.")
+
+        st.divider()
+        st.subheader(f"Manobras Salvas para o Furo: {furo_atual}")
+        manobras_furo = buscar_manobras(furo_atual)
+        if manobras_furo:
+            df_manobras = pd.DataFrame(manobras_furo, columns=["De (m)", "Até (m)", "Recup (m)", "Recup (%)", "Caixa", "H. Trab", "H. Parado", "Descrição Litológica"])
+            st.dataframe(df_manobras, use_container_width=True)
+        else:
+            st.info("Nenhuma manobra cadastrada para este furo.")
+
+    # ETAPA 4
+    elif opcao == "4. Dados do Furo & Perfuração":
         st.title("3. Dados do Furo e Perfuração")
         st.caption("Inserção dos dados técnicos e consolidação do boletim.")
         
@@ -190,6 +290,7 @@ else:
             col1, col2, col3 = st.columns(3)
             with col1:
                 furo = st.text_input("Identificação do Furo", placeholder="Ex: SP-01")
+                st.session_state["furo_id"] = furo
             with col2:
                 tipo_sondagem = st.selectbox("Tipo de Sondagem", ["SPT (A Percussão)", "Rotativa", "Mista", "Poço de Inspeção"])
             with col3:
@@ -215,8 +316,8 @@ else:
                 else:
                     st.warning("Informe a identificação do furo antes de gravar.")
 
-    # ETAPA 4
-    elif opcao == "4. Histórico de Boletins":
+    # ETAPA 5
+    elif opcao == "5. Histórico de Boletins":
         st.title("4. Histórico de Boletins Registrados")
         st.caption("Relação de furos salvos no banco de dados.")
         
