@@ -36,7 +36,7 @@ def init_db():
             observacao TEXT
         )
     ''')
-    # Tabela de Manobras e Testemunhos (Com colunas de Fotos tipo BLOB)
+    # Tabela de Manobras e Testemunhos
     c.execute('''
         CREATE TABLE IF NOT EXISTS manobras_testemunho (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,7 +58,7 @@ def init_db():
         )
     ''')
     
-    # Migração simples para bancos já criados sem as colunas de foto
+    # Migração para garantir suporte às fotos
     c.execute("PRAGMA table_info(manobras_testemunho)")
     colunas = [col[1] for col in c.fetchall()]
     for col_foto in ["foto1", "foto2", "foto3"]:
@@ -71,34 +71,62 @@ def init_db():
 init_db()
 
 def pil_para_bytes(img_pil):
-    """Converte objeto PIL.Image em bytes para gravação no SQLite."""
+    """Converte imagem PIL para bytes BLOB."""
     if img_pil is None:
         return None
     buffer = io.BytesIO()
     img_pil.save(buffer, format="JPEG")
     return buffer.getvalue()
 
-def atualizar_ou_inserir_boletim_automatico(furo_id, prof_atingida):
-    """Vincula a manobra ao histórico criando/atualizando a profundidade final do furo."""
+def sincronizar_boletim_automatico(furo_id, prof_atingida):
+    """Atualiza/Cria o boletim com as informações da sessão automaticamente."""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     
-    c.execute('SELECT id FROM boletins_campo WHERE furo_id = ?', (furo_id,))
+    # Resgata os dados gravados nas Etapas 1 e 2 via Session State
+    empresa = st.session_state.get("empresa", "Boa Fortuna Perfurações")
+    obra = st.session_state.get("obra", "Não informada")
+    cidade = st.session_state.get("cidade", "-")
+    coordenador = st.session_state.get("coordenador", "-")
+    supervisor = st.session_state.get("supervisor", "-")
+    sondador = st.session_state.get("sondador", "-")
+    auxiliares = st.session_state.get("auxiliares", "-")
+    tipo_sondagem = st.session_state.get("tipo_sondagem", "Rotativa")
+    
+    c.execute('SELECT id, profundidade_m FROM boletins_campo WHERE furo_id = ?', (furo_id,))
     existe = c.fetchone()
     
     if existe:
         c.execute('''
             UPDATE boletins_campo 
-            SET profundidade_m = max(profundidade_m, ?), data_registro = ? 
+            SET profundidade_m = max(profundidade_m, ?),
+                empresa = CASE WHEN ? != 'Boa Fortuna Perfurações' THEN ? ELSE empresa END,
+                obra_cliente = CASE WHEN ? != 'Não informada' THEN ? ELSE obra_cliente END,
+                cidade_uf = CASE WHEN ? != '-' THEN ? ELSE cidade_uf END,
+                sondador = CASE WHEN ? != '-' THEN ? ELSE sondador END,
+                coordenador = CASE WHEN ? != '-' THEN ? ELSE coordenador END,
+                supervisor = CASE WHEN ? != '-' THEN ? ELSE supervisor END,
+                auxiliares = CASE WHEN ? != '-' THEN ? ELSE auxiliares END,
+                data_registro = ?
             WHERE furo_id = ?
-        ''', (prof_atingida, data_atual, furo_id))
+        ''', (
+            prof_atingida,
+            empresa, empresa,
+            obra, obra,
+            cidade, cidade,
+            sondador, sondador,
+            coordenador, coordenador,
+            supervisor, supervisor,
+            auxiliares, auxiliares,
+            data_atual, furo_id
+        ))
     else:
         c.execute('''
             INSERT INTO boletins_campo 
             (data_registro, empresa, obra_cliente, cidade_uf, coordenador, supervisor, sondador, auxiliares, furo_id, tipo_sondagem, profundidade_m, observacao)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (data_atual, "Boa Fortuna Perfurações", "Não informada", "-", "-", "-", "-", "-", furo_id, "Rotativa / Mista", prof_atingida, "Criado via registro de manobras"))
+        ''', (data_atual, empresa, obra, cidade, coordenador, supervisor, sondador, auxiliares, furo_id, tipo_sondagem, prof_atingida, "Sincronizado via manobras"))
     
     conn.commit()
     conn.close()
@@ -125,7 +153,6 @@ def salvar_manobra(furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario,
     c = conn.cursor()
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     
-    # Processa as fotos
     f1 = pil_para_bytes(fotos_pil[0]) if fotos_pil and len(fotos_pil) > 0 else None
     f2 = pil_para_bytes(fotos_pil[1]) if fotos_pil and len(fotos_pil) > 1 else None
     f3 = pil_para_bytes(fotos_pil[2]) if fotos_pil and len(fotos_pil) > 2 else None
@@ -138,7 +165,8 @@ def salvar_manobra(furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario,
     conn.commit()
     conn.close()
     
-    atualizar_ou_inserir_boletim_automatico(furo, ate)
+    # Dispara a sincronização automática com a tabela master do boletim
+    sincronizar_boletim_automatico(furo, ate)
 
 def deletar_manobra(manobra_id):
     conn = sqlite3.connect(DB_NAME)
@@ -221,7 +249,6 @@ else:
         </style>
     """, unsafe_allow_html=True)
 
-    # --- BARRA LATERAL ---
     st.sidebar.markdown("<h3 style='color: #1E3A8A; margin-bottom: 0px;'>BOA FORTUNA</h3>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<p style='font-size: 12px; color: #333;'>Usuário: <b>{USUARIO_CORRETO}</b></p>", unsafe_allow_html=True)
     
@@ -245,8 +272,6 @@ else:
         st.session_state.logado = False
         st.rerun()
 
-    # --- ÁREA CENTRAL ---
-    
     # ETAPA 1
     if opcao == "1. Cabeçalho e Empresa":
         st.title("1. Cabeçalho de Identificação")
@@ -279,7 +304,7 @@ else:
 
             st.form_submit_button("Salvar Etapa 2")
 
-    # ETAPA 3: REGISTRO DE MANOBRA E TESTEMUNHO
+    # ETAPA 3
     elif opcao == "3. Registro de Manobra e Testemunho":
         st.title("3. Registro de Manobra e Testemunho")
         st.caption("Lançamento do avanço, recuperação da amostra, caixas e registro fotográfico.")
@@ -343,7 +368,7 @@ else:
             if btn_salvar_manobra:
                 if ate_m > de_m:
                     salvar_manobra(furo_atual, de_m, ate_m, recup_m, taxa_recup, num_caixa, horas_trab, horas_parado, horario, motivo_parada, desc_litologica, fotos_manobra_pil)
-                    st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m salva com sucesso e vinculada ao furo **{furo_atual}**!")
+                    st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m salva e sincronizada automaticamente!")
                     st.rerun()
                 else:
                     st.error("O valor final 'Até (m)' deve ser maior que o valor inicial 'De (m)'.")
@@ -365,7 +390,6 @@ else:
             )
             st.dataframe(df_manobras, use_container_width=True)
 
-            st.markdown("#### 🗑️ Gerenciamento e Remoção")
             col_excluir, col_btn = st.columns([3, 1])
             with col_excluir:
                 opcoes_manobra = {f"ID #{row[0]} | De {row[1]:.2f}m até {row[2]:.2f}m (Avanço: {row[2]-row[1]:.2f}m)": row[0] for row in manobras_furo}
@@ -377,7 +401,7 @@ else:
                 if st.button("Excluir Manobra", use_container_width=True):
                     id_para_deletar = opcoes_manobra[manobra_selecionada]
                     deletar_manobra(id_para_deletar)
-                    st.success("Manobra removida com sucesso!")
+                    st.success("Manobra removida!")
                     st.rerun()
         else:
             st.info("Nenhuma manobra cadastrada para este furo.")
@@ -385,7 +409,7 @@ else:
     # ETAPA 4
     elif opcao == "4. Dados do Furo & Perfuração":
         st.title("4. Dados do Furo e Perfuração")
-        st.caption("Inserção dos dados técnicos e consolidação do boletim.")
+        st.caption("Ajuste manual e dados complementares da perfuração.")
         
         with st.form("form_furo"):
             col1, col2, col3 = st.columns(3)
@@ -393,7 +417,8 @@ else:
                 furo = st.text_input("Identificação do Furo", value=st.session_state.get("furo_id", ""), placeholder="Ex: SP-01")
                 st.session_state["furo_id"] = furo
             with col2:
-                tipo_sondagem = st.selectbox("Tipo de Sondagem", ["SPT (A Percussão)", "Rotativa", "Mista", "Poço de Inspeção"])
+                tipo_sondagem = st.selectbox("Tipo de Sondagem", ["Rotativa", "SPT (A Percussão)", "Mista", "Poço de Inspeção"])
+                st.session_state["tipo_sondagem"] = tipo_sondagem
             with col3:
                 manobras_existentes = buscar_manobras(furo)
                 prof_sugerida = manobras_existentes[-1][2] if manobras_existentes else 0.0
@@ -401,7 +426,7 @@ else:
 
             obs = st.text_area("Observações Gerais / Nível d'Água (NA)", placeholder="Registros de NA, paralisações ou anomalias do terreno...")
 
-            btn_finalizar = st.form_submit_button("Finalizar e Gravar Boletim", use_container_width=True)
+            btn_finalizar = st.form_submit_button("Salvar Ajustes do Boletim", use_container_width=True)
 
             if btn_finalizar:
                 if furo:
@@ -415,11 +440,11 @@ else:
                         st.session_state.get("auxiliares", "-"),
                         furo, tipo_sondagem, profundidade, obs
                     )
-                    st.success(f"Boletim do furo {furo} atualizado e gravado no histórico.")
+                    st.success(f"Boletim {furo} atualizado.")
                 else:
-                    st.warning("Informe a identificação do furo antes de gravar.")
+                    st.warning("Informe o ID do furo.")
 
-    # ETAPA 5: HISTÓRICO INTEGRADO COM MANOBRAS E REGISTRO FOTOGRÁFICO
+    # ETAPA 5
     elif opcao == "5. Histórico de Boletins":
         st.title("5. Painel Integrado de Boletins e Perfurações")
         st.caption("Conexão direta entre cadastros do boletim, avanço físico e galeria de fotos de testemunho.")
@@ -430,7 +455,6 @@ else:
             cols_boletim = ["ID", "Furo", "Obra", "Cidade/UF", "Sondador", "Prof. Final (m)", "Tipo", "Empresa", "Coordenador", "Supervisor", "Auxiliares", "Observações", "Data/Hora"]
             df_boletins = pd.DataFrame(registros, columns=cols_boletim)
 
-            # Métricas Gerais
             col_m1, col_m2, col_m3 = st.columns(3)
             col_m1.metric("Total de Furos Registrados", len(df_boletins))
             col_m2.metric("Metragem Total Perfurada", f"{df_boletins['Prof. Final (m)'].sum():.2f} m")
@@ -438,7 +462,6 @@ else:
 
             st.divider()
 
-            # Tabela Resumo dos Boletins
             st.subheader("Boletins Salvos e Sincronizados")
             st.dataframe(
                 df_boletins[["Furo", "Obra", "Cidade/UF", "Sondador", "Tipo", "Prof. Final (m)", "Data/Hora"]],
@@ -447,7 +470,6 @@ else:
 
             st.divider()
 
-            # Seleção do Furo para Análise Completa
             st.subheader("🔗 Visão Integrada do Furo")
             furo_selecionado = st.selectbox("Selecione um furo para carregar o histórico completo de manobras e fotos:", df_boletins['Furo'].unique())
 
@@ -455,7 +477,6 @@ else:
                 info_furo = df_boletins[df_boletins['Furo'] == furo_selecionado].iloc[0]
                 manobras_furo = buscar_manobras(furo_selecionado)
 
-                # Cabeçalho Técnico do Furo Selecionado
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     st.write(f"**Empresa:** {info_furo['Empresa']}")
@@ -473,7 +494,6 @@ else:
                 if info_furo['Observações']:
                     st.info(f"**Observações de Campo:** {info_furo['Observações']}")
 
-                # Tabela Consolidada de Manobras do Furo
                 if manobras_furo:
                     dados_m = []
                     total_recup = 0
@@ -494,17 +514,14 @@ else:
                     st.markdown(f"##### Tabela de Manobras e Testemunhos ({furo_selecionado})")
                     st.dataframe(df_m_furo, use_container_width=True)
 
-                    # Resumo Estatístico do Furo
                     taxa_media_rec = (total_recup / total_avanc * 100) if total_avanc > 0 else 0
                     st.success(f"**Resumo do Furo {furo_selecionado}:** Avanço Total de **{total_avanc:.2f} m** | Amostra Recuperada: **{total_recup:.2f} m** ({taxa_media_rec:.1f}% de taxa média)")
                     
-                    # Botão para baixar dados específicos do furo
                     csv_furo = df_m_furo.to_csv(index=False).encode('utf-8')
                     st.download_button(f"📥 Exportar Manobras do Furo {furo_selecionado} (CSV)", data=csv_furo, file_name=f"manobras_{furo_selecionado}.csv", mime="text/csv")
                     
                     st.divider()
 
-                    # Galeria de Fotos Gravadas no Banco
                     st.subheader("📷 Galeria Fotográfica das Manobras")
                     tem_foto = False
 
@@ -525,6 +542,6 @@ else:
                         st.info("Nenhuma foto cadastrada para as manobras deste furo.")
 
                 else:
-                    st.warning("Este furo está registrado no cabeçalho, mas ainda não possui manobras detalhadas cadastradas.")
+                    st.warning("Este furo não possui manobras detalhadas cadastradas.")
         else:
             st.info("Nenhum boletim registrado no banco de dados.")
