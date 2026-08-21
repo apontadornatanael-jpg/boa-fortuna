@@ -230,8 +230,13 @@ else:
         st.session_state["furo_id"] = furo_atual
 
         manobras_existentes = buscar_manobras(furo_atual)
+        
+        # Sequenciamento automático de métricas acumuladas
         prox_de = manobras_existentes[-1][2] if manobras_existentes else 0.0
         prox_ate = round(prox_de + 1.5, 2)
+        
+        # Exibição de Resumo Automático da Perfuração
+        st.markdown(f"#### 📐 Profundidade Atual Perfurada: **{prox_de:.2f} m**")
 
         with st.form("form_manobra"):
             # Linha 1: Métricas de Perfuração
@@ -249,11 +254,11 @@ else:
             with col6:
                 horas_parado = st.number_input("Horas Parado (h)", min_value=0.0, step=0.5, value=0.0, format="%.1f")
 
-            # Cálculo automático de avanço e taxa de recuperação
+            # Cálculo do Avanço desta Manobra
             avancamento = round(ate_m - de_m, 2)
             taxa_recup = min(100.0, round((recup_m / avancamento * 100), 1)) if avancamento > 0 else 0.0
             
-            st.info(f"**Avanço da Manobra:** {avancamento:.2f} m | **Taxa de Recuperação:** {taxa_recup:.1f}%")
+            st.info(f"**Avanço Calculado nesta Manobra:** {avancamento:.2f} m | **Taxa de Recuperação:** {taxa_recup:.1f}%")
 
             # Linha 2: Horários e Detalhes Litológicos
             col7, col8, col9 = st.columns([1, 1, 2])
@@ -286,7 +291,7 @@ else:
             if btn_salvar_manobra:
                 if ate_m > de_m:
                     salvar_manobra(furo_atual, de_m, ate_m, recup_m, taxa_recup, num_caixa, horas_trab, horas_parado, horario, motivo_parada, desc_litologica)
-                    st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m salva com sucesso para o furo **{furo_atual}**!")
+                    st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m ({avancamento:.2f}m de avanço) salva para o furo **{furo_atual}**!")
                     st.rerun()
                 else:
                     st.error("O valor final 'Até (m)' deve ser maior que o valor inicial 'De (m)'.")
@@ -296,9 +301,16 @@ else:
         manobras_furo = buscar_manobras(furo_atual)
         
         if manobras_furo:
+            # Estruturação dos dados incluindo a coluna explícita de Avanço
+            dados_tabela = []
+            for row in manobras_furo:
+                m_id, de, ate, rec, rec_pct, caixa, h_tr, h_par, desc = row
+                avanc = round(ate - de, 2)
+                dados_tabela.append([m_id, de, ate, avanc, rec, rec_pct, caixa, h_tr, h_par, desc])
+
             df_manobras = pd.DataFrame(
-                manobras_furo, 
-                columns=["ID", "De (m)", "Até (m)", "Recup (m)", "Recup (%)", "Caixa", "H. Trab", "H. Parado", "Descrição Litológica"]
+                dados_tabela, 
+                columns=["ID", "De (m)", "Até (m)", "Avanço (m)", "Recup (m)", "Recup (%)", "Caixa", "H. Trab", "H. Parado", "Descrição Litológica"]
             )
             st.dataframe(df_manobras, use_container_width=True)
 
@@ -306,12 +318,11 @@ else:
             st.markdown("#### 🗑️ Gerenciamento e Remoção")
             col_excluir, col_btn = st.columns([3, 1])
             with col_excluir:
-                # Cria opções formatadas para identificação clara no selectbox
-                opcoes_manobra = {f"ID #{row[0]} | De {row[1]:.2f}m até {row[2]:.2f}m (Caixa {row[5]})": row[0] for row in manobras_furo}
+                opcoes_manobra = {f"ID #{row[0]} | De {row[1]:.2f}m até {row[2]:.2f}m (Avanço: {row[2]-row[1]:.2f}m)": row[0] for row in manobras_furo}
                 manobra_selecionada = st.selectbox("Selecione a manobra que deseja apagar:", list(opcoes_manobra.keys()))
             
             with col_btn:
-                st.write("") # Espaçamento para alinhar com o selectbox
+                st.write("")
                 st.write("")
                 if st.button("Excluir Manobra", use_container_width=True):
                     id_para_deletar = opcoes_manobra[manobra_selecionada]
@@ -334,7 +345,10 @@ else:
             with col2:
                 tipo_sondagem = st.selectbox("Tipo de Sondagem", ["SPT (A Percussão)", "Rotativa", "Mista", "Poço de Inspeção"])
             with col3:
-                profundidade = st.number_input("Profundidade Final (m)", min_value=0.0, step=0.5)
+                # Sugere a profundidade atingida pelas manobras
+                manobras_existentes = buscar_manobras(furo)
+                prof_sugerida = manobras_existentes[-1][2] if manobras_existentes else 0.0
+                profundidade = st.number_input("Profundidade Final (m)", min_value=0.0, step=0.5, value=float(prof_sugerida))
 
             obs = st.text_area("Observações Gerais / Nível d'Água (NA)", placeholder="Registros de NA, paralisações ou anomalias do terreno...")
 
