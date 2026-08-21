@@ -2,6 +2,7 @@ import streamlit as st
 import sqlite3
 from datetime import datetime, date
 import pandas as pd
+from PIL import Image
 
 # Configuração da página
 st.set_page_config(page_title="Boa Fortuna - Sistema de Sondagem", layout="wide")
@@ -215,30 +216,36 @@ else:
 
     # ETAPA 3: REGISTRO DE MANOBRA E TESTEMUNHO
     elif opcao == "3. Registro de Manobra e Testemunho":
-        st.title("2. Registro de Manobra e Testemunho")
+        st.title("3. Registro de Manobra e Testemunho")
         st.caption("Lançamento do avanço, recuperação da amostra, caixas e registro fotográfico.")
         
-        furo_atual = st.text_input("Identificação do Furo", value=st.session_state.get("furo_id", "SP-01"))
+        # Pega dinamicamente o furo_id armazenado na sessão ou utiliza 'SP-01' por padrão
+        furo_atual = st.text_input("Identificação do Furo", value=st.session_state.get("furo_id", "SP-01"), key="input_furo_manobra")
+        st.session_state["furo_id"] = furo_atual
+
+        manobras_existentes = buscar_manobras(furo_atual)
+        prox_de = manobras_existentes[-1][1] if manobras_existentes else 0.0
+        prox_ate = round(prox_de + 1.5, 2)
 
         with st.form("form_manobra"):
             # Linha 1: Métricas de Perfuração
             col1, col2, col3, col4, col5, col6 = st.columns(6)
             with col1:
-                de_m = st.number_input("De (m)", min_value=0.0, step=0.5, value=0.0)
+                de_m = st.number_input("De (m)", min_value=0.0, step=0.5, value=float(prox_de), format="%.2f")
             with col2:
-                ate_m = st.number_input("Até (m)", min_value=0.0, step=0.5, value=1.50)
+                ate_m = st.number_input("Até (m)", min_value=0.0, step=0.5, value=float(prox_ate), format="%.2f")
             with col3:
-                recup_m = st.number_input("Recup. (m)", min_value=0.0, step=0.1, value=1.50)
+                recup_m = st.number_input("Recup. (m)", min_value=0.0, step=0.1, value=round(max(0.0, ate_m - de_m), 2), format="%.2f")
             with col4:
-                num_caixa = st.text_input("Nº da Caixa", value="01")
+                num_caixa = st.text_input("Nº da Caixa", value=manobras_existentes[-1][4] if manobras_existentes else "01")
             with col5:
-                horas_trab = st.number_input("Horas Trab. (h)", min_value=0.0, step=0.5, value=1.0)
+                horas_trab = st.number_input("Horas Trab. (h)", min_value=0.0, step=0.5, value=1.0, format="%.1f")
             with col6:
-                horas_parado = st.number_input("Horas Parado (h)", min_value=0.0, step=0.5, value=0.0)
+                horas_parado = st.number_input("Horas Parado (h)", min_value=0.0, step=0.5, value=0.0, format="%.1f")
 
             # Cálculo automático de avanço e taxa de recuperação
-            avancamento = ate_m - de_m
-            taxa_recup = (recup_m / avancamento * 100) if avancamento > 0 else 0.0
+            avancamento = round(ate_m - de_m, 2)
+            taxa_recup = min(100.0, round((recup_m / avancamento * 100), 1)) if avancamento > 0 else 0.0
             
             st.info(f"**Avanço da Manobra:** {avancamento:.2f} m | **Taxa de Recuperação:** {taxa_recup:.1f}%")
 
@@ -256,21 +263,28 @@ else:
             
             # Abas para Upload ou Captura pela Câmera
             tab_galeria, tab_camera = st.tabs(["Galeria", "Câmera"])
+            fotos_manobra_pil = []
             
             with tab_galeria:
                 fotos_upload = st.file_uploader("Selecione até 3 imagens", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
+                if fotos_upload:
+                    for f in fotos_upload[:3]:
+                        fotos_manobra_pil.append(Image.open(f))
             
             with tab_camera:
                 foto_cam = st.camera_input("Tirar foto da caixa/testemunho")
+                if foto_cam and len(fotos_manobra_pil) < 3:
+                    fotos_manobra_pil.append(Image.open(foto_cam))
 
             btn_salvar_manobra = st.form_submit_button("Adicionar Manobra", use_container_width=True)
 
             if btn_salvar_manobra:
                 if ate_m > de_m:
                     salvar_manobra(furo_atual, de_m, ate_m, recup_m, taxa_recup, num_caixa, horas_trab, horas_parado, horario, motivo_parada, desc_litologica)
-                    st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m salva com sucesso.")
+                    st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m salva com sucesso para o furo **{furo_atual}**!")
+                    st.rerun()
                 else:
-                    st.warning("O valor final 'Até (m)' deve ser maior que o valor inicial 'De (m)'.")
+                    st.error("O valor final 'Até (m)' deve ser maior que o valor inicial 'De (m)'.")
 
         st.divider()
         st.subheader(f"Manobras Salvas para o Furo: {furo_atual}")
@@ -283,13 +297,13 @@ else:
 
     # ETAPA 4
     elif opcao == "4. Dados do Furo & Perfuração":
-        st.title("3. Dados do Furo e Perfuração")
+        st.title("4. Dados do Furo e Perfuração")
         st.caption("Inserção dos dados técnicos e consolidação do boletim.")
         
         with st.form("form_furo"):
             col1, col2, col3 = st.columns(3)
             with col1:
-                furo = st.text_input("Identificação do Furo", placeholder="Ex: SP-01")
+                furo = st.text_input("Identificação do Furo", value=st.session_state.get("furo_id", ""), placeholder="Ex: SP-01")
                 st.session_state["furo_id"] = furo
             with col2:
                 tipo_sondagem = st.selectbox("Tipo de Sondagem", ["SPT (A Percussão)", "Rotativa", "Mista", "Poço de Inspeção"])
@@ -318,7 +332,7 @@ else:
 
     # ETAPA 5
     elif opcao == "5. Histórico de Boletins":
-        st.title("4. Histórico de Boletins Registrados")
+        st.title("5. Histórico de Boletins Registrados")
         st.caption("Relação de furos salvos no banco de dados.")
         
         registros = buscar_registros()
@@ -326,4 +340,4 @@ else:
             df = pd.DataFrame(registros, columns=["Furo", "Obra", "Cidade/UF", "Sondador", "Prof. (m)", "Tipo", "Data/Hora"])
             st.dataframe(df, use_container_width=True)
         else:
-            st.info("Nenhum registro encontrado no banco de dados.")
+            st.info("Nenum registro encontrado no banco de dados.")
