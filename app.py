@@ -5,12 +5,6 @@ import pandas as pd
 from PIL import Image
 import io
 
-# Importações para geração do PDF via ReportLab
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
-
 # Configuração da página
 st.set_page_config(page_title="Boa Fortuna - Sistema de Sondagem", layout="wide")
 
@@ -24,7 +18,6 @@ DB_NAME = "boafortuna_dados.db"
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    # Tabela de Boletins
     c.execute('''
         CREATE TABLE IF NOT EXISTS boletins_campo (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,7 +35,6 @@ def init_db():
             observacao TEXT
         )
     ''')
-    # Tabela de Manobras e Testemunhos
     c.execute('''
         CREATE TABLE IF NOT EXISTS manobras_testemunho (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,20 +55,12 @@ def init_db():
             foto3 BLOB
         )
     ''')
-    
-    c.execute("PRAGMA table_info(manobras_testemunho)")
-    colunas = [col[1] for col in c.fetchall()]
-    for col_foto in ["foto1", "foto2", "foto3"]:
-        if col_foto not in colunas:
-            c.execute(f"ALTER TABLE manobras_testemunho ADD COLUMN {col_foto} BLOB")
-            
     conn.commit()
     conn.close()
 
 init_db()
 
 def pil_para_bytes(img_pil):
-    """Converte imagem PIL para bytes BLOB."""
     if img_pil is None:
         return None
     buffer = io.BytesIO()
@@ -84,7 +68,6 @@ def pil_para_bytes(img_pil):
     return buffer.getvalue()
 
 def sincronizar_boletim_automatico(furo_id, prof_atingida):
-    """Atualiza/Cria o boletim com as informações da sessão automaticamente."""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -115,15 +98,9 @@ def sincronizar_boletim_automatico(furo_id, prof_atingida):
                 data_registro = ?
             WHERE furo_id = ?
         ''', (
-            prof_atingida,
-            empresa, empresa,
-            obra, obra,
-            cidade, cidade,
-            sondador, sondador,
-            coordenador, coordenador,
-            supervisor, supervisor,
-            auxiliares, auxiliares,
-            data_atual, furo_id
+            prof_atingida, empresa, empresa, obra, obra, cidade, cidade,
+            sondador, sondador, coordenador, coordenador, supervisor, supervisor,
+            auxiliares, auxiliares, data_atual, furo_id
         ))
     else:
         c.execute('''
@@ -159,7 +136,7 @@ def salvar_manobra(furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario,
     
     f1 = pil_para_bytes(fotos_pil[0]) if fotos_pil and len(fotos_pil) > 0 else None
     f2 = pil_para_bytes(fotos_pil[1]) if fotos_pil and len(fotos_pil) > 1 else None
-    f3 = pil_para_bytes(fotos_pil[2]) if fotos_pil and len(fotos_pil) > 3 else None
+    f3 = pil_para_bytes(fotos_pil[2]) if fotos_pil and len(fotos_pil) > 2 else None
 
     c.execute('''
         INSERT INTO manobras_testemunho
@@ -189,79 +166,92 @@ def buscar_manobras(furo_id=None):
     conn.close()
     return dados
 
-# --- FUNÇÃO PARA GERAR PDF DO BOLETIM DE CAMPO ---
-def gerar_pdf_boletim(furo_id, obs_fechamento=""):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
-    story = []
+# --- GERADOR DE RELATÓRIO HTML ---
+def gerar_html_boletim(furo_id, obs_fechamento=""):
+    empresa = st.session_state.get("empresa", "Boa Fortuna Perfurações e Sondagens")
+    obra = st.session_state.get("obra", "-")
+    cidade = st.session_state.get("cidade", "-")
+    sondador = st.session_state.get("sondador", "-")
+    coordenador = st.session_state.get("coordenador", "-")
+    data_campo = str(st.session_state.get("data_campo", date.today()))
     
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor('#1E3A8A'), alignment=1, spaceAfter=10)
-    sub_style = ParagraphStyle('SubStyle', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#555555'), alignment=1, spaceAfter=15)
-    header_style = ParagraphStyle('HeaderStyle', parent=styles['Heading2'], fontSize=11, textColor=colors.HexColor('#1E3A8A'), spaceBefore=10, spaceAfter=5)
-    cell_style = ParagraphStyle('CellStyle', parent=styles['Normal'], fontSize=8)
-
-    # Título do Relatório
-    empresa = st.session_state.get("empresa", "Boa Fortuna Perfurações")
-    story.append(Paragraph(f"<b>{empresa.upper()}</b>", title_style))
-    story.append(Paragraph(f"BOLETIM DIÁRIO DE SONDAGEM (BDS) - FURO: <b>{furo_id}</b>", sub_style))
-
-    # Tabela de Dados Gerais
-    dados_gerais = [
-        [
-            Paragraph(f"<b>Obra/Cliente:</b> {st.session_state.get('obra', '-')}", cell_style),
-            Paragraph(f"<b>Cidade/UF:</b> {st.session_state.get('cidade', '-')}", cell_style),
-            Paragraph(f"<b>Data:</b> {st.session_state.get('data_campo', date.today())}", cell_style)
-        ],
-        [
-            Paragraph(f"<b>Sondador:</b> {st.session_state.get('sondador', '-')}", cell_style),
-            Paragraph(f"<b>Coordenador:</b> {st.session_state.get('coordenador', '-')}", cell_style),
-            Paragraph(f"<b>Supervisor:</b> {st.session_state.get('supervisor', '-')}", cell_style)
-        ]
-    ]
-    t_geral = Table(dados_gerais, colWidths=[180, 180, 180])
-    t_geral.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F3F4F6')),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#D1D5DB')),
-        ('PADDING', (0,0), (-1,-1), 5),
-    ]))
-    story.append(t_geral)
-    story.append(Spacer(1, 10))
-
-    # Tabela de Manobras
-    story.append(Paragraph("Avanço e Recuperação de Testemunhos", header_style))
     manobras = buscar_manobras(furo_id)
+    linhas_tabela = ""
+    for m in manobras:
+        de, ate, rec, rec_pct, caixa, desc = m[1], m[2], m[3], m[4], m[5], m[8]
+        avanc = round(ate - de, 2)
+        linhas_tabela += f"""
+        <tr>
+            <td>{de:.2f}</td>
+            <td>{ate:.2f}</td>
+            <td>{avanc:.2f}</td>
+            <td>{rec:.2f}</td>
+            <td>{rec_pct:.1f}%</td>
+            <td>{caixa}</td>
+            <td style='text-align:left;'>{desc or '-'}</td>
+        </tr>
+        """
 
-    if manobras:
-        t_data = [["De (m)", "Até (m)", "Avanço (m)", "Recup (m)", "Recup (%)", "Caixa", "Litologia / Descrição"]]
-        for m in manobras:
-            de, ate, rec, rec_pct, caixa, desc = m[1], m[2], m[3], m[4], m[5], m[8]
-            avanc = round(ate - de, 2)
-            t_data.append([
-                f"{de:.2f}", f"{ate:.2f}", f"{avanc:.2f}", f"{rec:.2f}", f"{rec_pct:.1f}%", str(caixa), Paragraph(desc or "-", cell_style)
-            ])
-            
-        t_manobras = Table(t_data, colWidths=[55, 55, 55, 55, 55, 45, 220])
-        t_manobras.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#9CA3AF')),
-            ('FONTSIZE', (0,0), (-1,-1), 8),
-            ('PADDING', (0,0), (-1,-1), 4),
-        ]))
-        story.append(t_manobras)
-    else:
-        story.append(Paragraph("Nenhuma manobra cadastrada para este furo.", cell_style))
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Boletim Diário de Sondagem - {furo_id}</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 20px; color: #333; }}
+            h2 {{ color: #1E3A8A; margin-bottom: 2px; text-align: center; }}
+            h4 {{ color: #555; margin-top: 0; text-align: center; }}
+            .box-info {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; background: #f9f9f9; }}
+            .box-info td {{ padding: 8px; border: 1px solid #ccc; font-size: 13px; }}
+            .tabela-dados {{ width: 100%; border-collapse: collapse; margin-top: 10px; text-align: center; }}
+            .tabela-dados th {{ background: #1E3A8A; color: white; padding: 8px; font-size: 12px; }}
+            .tabela-dados td {{ padding: 6px; border: 1px solid #ddd; font-size: 12px; }}
+            .obs {{ margin-top: 20px; padding: 10px; border: 1px solid #ccc; background: #fff8e1; font-size: 12px; }}
+        </style>
+    </head>
+    <body>
+        <h2>{empresa.upper()}</h2>
+        <h4>BOLETIM DIÁRIO DE SONDAGEM (BDS) - FURO: {furo_id}</h4>
+        
+        <table class="box-info">
+            <tr>
+                <td><b>Cliente/Obra:</b> {obra}</td>
+                <td><b>Cidade/UF:</b> {cidade}</td>
+                <td><b>Data:</b> {data_campo}</td>
+            </tr>
+            <tr>
+                <td><b>Sondador:</b> {sondador}</td>
+                <td><b>Coordenador:</b> {coordenador}</td>
+                <td><b>Identificação Furo:</b> {furo_id}</td>
+            </tr>
+        </table>
 
-    if obs_fechamento:
-        story.append(Spacer(1, 10))
-        story.append(Paragraph("Observações de Fechamento de Turno", header_style))
-        story.append(Paragraph(obs_fechamento, cell_style))
+        <h3>Avanço e Recuperação de Testemunhos</h3>
+        <table class="tabela-dados">
+            <thead>
+                <tr>
+                    <th>De (m)</th>
+                    <th>Até (m)</th>
+                    <th>Avanço (m)</th>
+                    <th>Recup (m)</th>
+                    <th>Recup (%)</th>
+                    <th>Caixa</th>
+                    <th>Descrição Litológica</th>
+                </tr>
+            </thead>
+            <tbody>
+                {linhas_tabela}
+            </tbody>
+        </table>
 
-    doc.build(story)
-    buffer.seek(0)
-    return buffer
+        <div class="obs">
+            <b>Observações de Fechamento:</b><br>{obs_fechamento or 'Nenhuma observação informada.'}
+        </div>
+    </body>
+    </html>
+    """
+    return html
 
 # --- ESTADO DA SESSÃO ---
 if "logado" not in st.session_state:
@@ -330,7 +320,7 @@ else:
             "1. Cabeçalho e Empresa",
             "2. Equipe de Campo",
             "3. Registro de Manobra e Testemunho",
-            "4. Fechamento de Turno & PDF (DDR)",
+            "4. Fechamento de Turno & Relatório",
             "5. Dados do Furo & Perfuração"
         ],
         label_visibility="collapsed"
@@ -475,10 +465,10 @@ else:
         else:
             st.info("Nenhuma manobra cadastrada para este furo.")
 
-    # ETAPA 4 - FECHAMENTO DE TURNO & GERADOR DE PDF
-    elif opcao == "4. Fechamento de Turno & PDF (DDR)":
-        st.title("4. Fechamento de Turno e Emissão do BDS")
-        st.caption("Consolidação dos dados do dia, cálculo de produtividade e geração do relatório em PDF.")
+    # ETAPA 4 - FECHAMENTO & RELATÓRIO
+    elif opcao == "4. Fechamento de Turno & Relatório":
+        st.title("4. Fechamento de Turno e Relatório de Campo")
+        st.caption("Consolidação dos dados do dia, métricas de avanço e emissão do boletim.")
 
         furo_fechamento = st.text_input("Identificação do Furo", value=st.session_state.get("furo_id", "SP-01"))
         manobras = buscar_manobras(furo_fechamento)
@@ -501,13 +491,13 @@ else:
             
             obs_fechamento = st.text_area("Observações Finais do Turno / Ocorrências de Campo", placeholder="Ex: Paralisação por chuva das 14h às 15h. Troca de coroa realizada.")
 
-            pdf_bytes = gerar_pdf_boletim(furo_fechamento, obs_fechamento)
+            html_conteudo = gerar_html_boletim(furo_fechamento, obs_fechamento)
 
             st.download_button(
-                label="📄 Baixar Boletim em PDF (BDS)",
-                data=pdf_bytes,
-                file_name=f"Boletim_{furo_fechamento}_{date.today().strftime('%Y%m%d')}.pdf",
-                mime="application/pdf",
+                label="🌐 Baixar Boletim de Sondagem (HTML / Para Impressão PDF)",
+                data=html_conteudo,
+                file_name=f"Boletim_{furo_fechamento}_{date.today().strftime('%Y%m%d')}.html",
+                mime="text/html",
                 use_container_width=True
             )
         else:
