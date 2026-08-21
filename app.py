@@ -4,7 +4,7 @@ from datetime import datetime, date
 import pandas as pd
 
 # Configuração da página
-st.set_page_config(page_title="Boa Fortuna Investimento", page_icon="🚜", layout="wide")
+st.set_page_config(page_title="Boa Fortuna - Sistema de Sondagem", layout="wide")
 
 # --- CREDENCIAIS DE ACESSO ---
 USUARIO_CORRETO = "admin"
@@ -66,14 +66,15 @@ if "logado" not in st.session_state:
 if not st.session_state.logado:
     st.markdown("""
         <style>
-        .stApp { background-color: #D2B48C; }
+        .stApp { background-color: #EFECE6; }
         div[data-testid="stForm"] { 
-            background-color: #ffffff; padding: 35px; border-radius: 12px; 
-            border-top: 6px solid #1E3A8A; box-shadow: 0px 8px 16px rgba(0, 0, 0, 0.15);
+            background-color: #ffffff; padding: 40px; border-radius: 8px; 
+            border-top: 5px solid #1E3A8A; box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.08);
         }
         div[data-testid="stForm"] button { 
             background-color: #1E3A8A !important; color: white !important; 
-            font-weight: bold !important; border-radius: 6px !important; width: 100% !important;
+            font-weight: 600 !important; border-radius: 4px !important; width: 100% !important;
+            height: 42px !important; border: none !important;
         }
         #MainMenu, footer, header { visibility: hidden; }
         </style>
@@ -81,13 +82,13 @@ if not st.session_state.logado:
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<h1 style='text-align: center; color: #1E3A8A; margin-bottom: 0px;'>📈 Boa Fortuna</h1>", unsafe_allow_html=True)
-        st.markdown("<h4 style='text-align: center; color: #8B5A2B; margin-top: -5px; margin-bottom: 25px;'>INVESTIMENTO & SONDAGEM</h4>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center; color: #1E3A8A; margin-bottom: 0px; font-weight: 700;'>BOA FORTUNA</h2>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #555555; font-size: 13px; letter-spacing: 2px; margin-bottom: 25px;'>PERFURAÇÕES E SONDAGENS</p>", unsafe_allow_html=True)
 
         with st.form("login_form"):
             user_input = st.text_input("Usuário", placeholder="Digite seu usuário", label_visibility="collapsed")
             pass_input = st.text_input("Senha", type="password", placeholder="Digite sua senha", label_visibility="collapsed")
-            btn_entrar = st.form_submit_button("Acessar Conta")
+            btn_entrar = st.form_submit_button("Acessar Sistema")
 
             if btn_entrar:
                 if user_input == USUARIO_CORRETO and pass_input == SENHA_CORRETA:
@@ -96,44 +97,62 @@ if not st.session_state.logado:
                 else:
                     st.error("Usuário ou senha incorretos.")
 
-# --- PAINEL PRINCIPAL COM NAVEGAÇÃO LATERAL ---
+# --- PAINEL PRINCIPAL ---
 else:
     st.markdown("""
         <style>
-        .stApp { background-color: #F5F2EB; }
+        /* Estilização Geral */
+        .stApp { background-color: #F8F9FA; }
         div[data-testid="stSidebar"] { background-color: #D2B48C; }
+        
+        /* Ajuste dos títulos */
+        h1, h2, h3 { font-family: 'Segoe UI', sans-serif; color: #1E3A8A; font-weight: 600; }
+        
+        /* Botões Padrão */
+        div.stButton > button {
+            background-color: #1E3A8A !important;
+            color: #ffffff !important;
+            border-radius: 4px !important;
+            border: none !important;
+            font-weight: 500 !important;
+        }
+        div.stButton > button:hover {
+            background-color: #2563EB !important;
+        }
+        
+        #MainMenu, footer, header { visibility: hidden; }
         </style>
     """, unsafe_allow_html=True)
 
-    # --- BARRA LATERAL (MENU DE SELEÇÃO) ---
-    st.sidebar.title("🚜 Boa Fortuna")
-    st.sidebar.markdown(f"👤 Usuário: **{USUARIO_CORRETO}**")
+    # --- BARRA LATERAL ---
+    st.sidebar.markdown("<h3 style='color: #1E3A8A; margin-bottom: 0px;'>BOA FORTUNA</h3>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<p style='font-size: 12px; color: #333;'>Usuário: <b>{USUARIO_CORRETO}</b></p>", unsafe_allow_html=True)
     
     st.sidebar.divider()
-    st.sidebar.subheader("📌 Menu de Navegação")
+    st.sidebar.markdown("**Menu de Navegação**")
     
-    # Opções do Menu
     opcao = st.sidebar.radio(
-        "Selecione uma etapa para visualizar:",
+        "Selecione a etapa:",
         [
-            "🏢 Cabeçalho e Empresa",
-            "👥 Equipe de Campo",
-            "📌 Dados do Furo & Perfuração",
-            "📊 Histórico de Boletins"
-        ]
+            "1. Cabeçalho e Empresa",
+            "2. Equipe de Campo",
+            "3. Dados do Furo & Perfuração",
+            "4. Histórico de Boletins"
+        ],
+        label_visibility="collapsed"
     )
 
     st.sidebar.divider()
-    if st.sidebar.button("🚪 Sair da Conta", use_container_width=True):
+    if st.sidebar.button("Sair da Conta", use_container_width=True):
         st.session_state.logado = False
         st.rerun()
 
-    # --- ÁREA CENTRAL (MUDANÇA CONFORME O CLIQUE NA LATERAL) ---
+    # --- ÁREA CENTRAL ---
     
-    # 1. ETAPA: CABEÇALHO E EMPRESA
-    if opcao == "🏢 Cabeçalho e Empresa":
-        st.title("🏢 1. Cabeçalho de Identificação")
-        st.markdown("Preencha as informações institucionais e de localização do projeto.")
+    # ETAPA 1
+    if opcao == "1. Cabeçalho e Empresa":
+        st.title("1. Cabeçalho de Identificação")
+        st.caption("Informações institucionais e de localização do projeto.")
         
         with st.form("form_cabecalho"):
             col1, col2 = st.columns(2)
@@ -144,12 +163,12 @@ else:
                 st.session_state["cidade"] = st.text_input("Cidade / UF", value=st.session_state.get("cidade", ""))
                 st.session_state["data_campo"] = st.date_input("Data do Ensaio", value=st.session_state.get("data_campo", date.today()))
             
-            st.form_submit_button("✅ Salvar Etapa 1")
+            st.form_submit_button("Salvar Etapa 1")
 
-    # 2. ETAPA: EQUIPE DE CAMPO
-    elif opcao == "👥 Equipe de Campo":
-        st.title("👥 2. Equipe Responsável")
-        st.markdown("Cadastre os profissionais e responsáveis técnicos da operação.")
+    # ETAPA 2
+    elif opcao == "2. Equipe de Campo":
+        st.title("2. Equipe Responsável")
+        st.caption("Cadastro dos profissionais e responsáveis técnicos da operação.")
         
         with st.form("form_equipe"):
             col1, col2 = st.columns(2)
@@ -160,12 +179,12 @@ else:
                 st.session_state["sondador"] = st.text_input("Sondador Principal", value=st.session_state.get("sondador", ""))
                 st.session_state["auxiliares"] = st.text_input("Auxiliares de Sondagem", value=st.session_state.get("auxiliares", ""))
 
-            st.form_submit_button("✅ Salvar Etapa 2")
+            st.form_submit_button("Salvar Etapa 2")
 
-    # 3. ETAPA: DADOS DO FURO & CONSOLIDAÇÃO
-    elif opcao == "📌 Dados do Furo & Perfuração":
-        st.title("📌 3. Dados do Furo e Envio do Boletim")
-        st.markdown("Insira os dados técnicos e finalize a gravação no banco de dados.")
+    # ETAPA 3
+    elif opcao == "3. Dados do Furo & Perfuração":
+        st.title("3. Dados do Furo e Perfuração")
+        st.caption("Inserção dos dados técnicos e consolidação do boletim.")
         
         with st.form("form_furo"):
             col1, col2, col3 = st.columns(3)
@@ -176,9 +195,9 @@ else:
             with col3:
                 profundidade = st.number_input("Profundidade Final (m)", min_value=0.0, step=0.5)
 
-            obs = st.text_area("Observações Gerais / Nível d'Água (NA)", placeholder="Registros de NA, paralisação...")
+            obs = st.text_area("Observações Gerais / Nível d'Água (NA)", placeholder="Registros de NA, paralisações ou anomalias do terreno...")
 
-            btn_finalizar = st.form_submit_button("💾 Finalizar e Gravar Boletim Completo", use_container_width=True)
+            btn_finalizar = st.form_submit_button("Finalizar e Gravar Boletim", use_container_width=True)
 
             if btn_finalizar:
                 if furo:
@@ -192,14 +211,14 @@ else:
                         st.session_state.get("auxiliares", "-"),
                         furo, tipo_sondagem, profundidade, obs
                     )
-                    st.success(f"✅ Boletim do furo **{furo}** gravado com sucesso!")
+                    st.success(f"Boletim do furo {furo} gravado com sucesso.")
                 else:
-                    st.warning("⚠️ Preencha a Identificação do Furo antes de gravar.")
+                    st.warning("Informe a identificação do furo antes de gravar.")
 
-    # 4. ETAPA: HISTÓRICO
-    elif opcao == "📊 Histórico de Boletins":
-        st.title("📊 Histórico de Boletins Registrados")
-        st.markdown("Relação completa de todos os furos salvos no sistema.")
+    # ETAPA 4
+    elif opcao == "4. Histórico de Boletins":
+        st.title("4. Histórico de Boletins Registrados")
+        st.caption("Relação de furos salvos no banco de dados.")
         
         registros = buscar_registros()
         if registros:
