@@ -82,6 +82,13 @@ def salvar_manobra(furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario,
     conn.commit()
     conn.close()
 
+def deletar_manobra(manobra_id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('DELETE FROM manobras_testemunho WHERE id = ?', (manobra_id,))
+    conn.commit()
+    conn.close()
+
 def buscar_registros():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -94,9 +101,9 @@ def buscar_manobras(furo_id=None):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     if furo_id:
-        c.execute('SELECT de_m, ate_m, recup_m, taxa_recup_pct, num_caixa, horas_trab, horas_parado, descricao_litologica FROM manobras_testemunho WHERE furo_id = ? ORDER BY id ASC', (furo_id,))
+        c.execute('SELECT id, de_m, ate_m, recup_m, taxa_recup_pct, num_caixa, horas_trab, horas_parado, descricao_litologica FROM manobras_testemunho WHERE furo_id = ? ORDER BY id ASC', (furo_id,))
     else:
-        c.execute('SELECT furo_id, de_m, ate_m, recup_m, taxa_recup_pct, num_caixa, descricao_litologica, data_registro FROM manobras_testemunho ORDER BY id DESC')
+        c.execute('SELECT id, furo_id, de_m, ate_m, recup_m, taxa_recup_pct, num_caixa, descricao_litologica, data_registro FROM manobras_testemunho ORDER BY id DESC')
     dados = c.fetchall()
     conn.close()
     return dados
@@ -219,12 +226,11 @@ else:
         st.title("3. Registro de Manobra e Testemunho")
         st.caption("Lançamento do avanço, recuperação da amostra, caixas e registro fotográfico.")
         
-        # Pega dinamicamente o furo_id armazenado na sessão ou utiliza 'SP-01' por padrão
         furo_atual = st.text_input("Identificação do Furo", value=st.session_state.get("furo_id", "SP-01"), key="input_furo_manobra")
         st.session_state["furo_id"] = furo_atual
 
         manobras_existentes = buscar_manobras(furo_atual)
-        prox_de = manobras_existentes[-1][1] if manobras_existentes else 0.0
+        prox_de = manobras_existentes[-1][2] if manobras_existentes else 0.0
         prox_ate = round(prox_de + 1.5, 2)
 
         with st.form("form_manobra"):
@@ -237,7 +243,7 @@ else:
             with col3:
                 recup_m = st.number_input("Recup. (m)", min_value=0.0, step=0.1, value=round(max(0.0, ate_m - de_m), 2), format="%.2f")
             with col4:
-                num_caixa = st.text_input("Nº da Caixa", value=manobras_existentes[-1][4] if manobras_existentes else "01")
+                num_caixa = st.text_input("Nº da Caixa", value=manobras_existentes[-1][5] if manobras_existentes else "01")
             with col5:
                 horas_trab = st.number_input("Horas Trab. (h)", min_value=0.0, step=0.5, value=1.0, format="%.1f")
             with col6:
@@ -261,7 +267,6 @@ else:
             st.markdown("---")
             st.subheader("Registro Fotográfico da Manobra (Até 3 fotos)")
             
-            # Abas para Upload ou Captura pela Câmera
             tab_galeria, tab_camera = st.tabs(["Galeria", "Câmera"])
             fotos_manobra_pil = []
             
@@ -289,9 +294,30 @@ else:
         st.divider()
         st.subheader(f"Manobras Salvas para o Furo: {furo_atual}")
         manobras_furo = buscar_manobras(furo_atual)
+        
         if manobras_furo:
-            df_manobras = pd.DataFrame(manobras_furo, columns=["De (m)", "Até (m)", "Recup (m)", "Recup (%)", "Caixa", "H. Trab", "H. Parado", "Descrição Litológica"])
+            df_manobras = pd.DataFrame(
+                manobras_furo, 
+                columns=["ID", "De (m)", "Até (m)", "Recup (m)", "Recup (%)", "Caixa", "H. Trab", "H. Parado", "Descrição Litológica"]
+            )
             st.dataframe(df_manobras, use_container_width=True)
+
+            # --- SEÇÃO DE EXCLUSÃO DE MANOBRAS ---
+            st.markdown("#### 🗑️ Gerenciamento e Remoção")
+            col_excluir, col_btn = st.columns([3, 1])
+            with col_excluir:
+                # Cria opções formatadas para identificação clara no selectbox
+                opcoes_manobra = {f"ID #{row[0]} | De {row[1]:.2f}m até {row[2]:.2f}m (Caixa {row[5]})": row[0] for row in manobras_furo}
+                manobra_selecionada = st.selectbox("Selecione a manobra que deseja apagar:", list(opcoes_manobra.keys()))
+            
+            with col_btn:
+                st.write("") # Espaçamento para alinhar com o selectbox
+                st.write("")
+                if st.button("Excluir Manobra", use_container_width=True):
+                    id_para_deletar = opcoes_manobra[manobra_selecionada]
+                    deletar_manobra(id_para_deletar)
+                    st.success("Manobra removida com sucesso!")
+                    st.rerun()
         else:
             st.info("Nenhuma manobra cadastrada para este furo.")
 
@@ -340,4 +366,4 @@ else:
             df = pd.DataFrame(registros, columns=["Furo", "Obra", "Cidade/UF", "Sondador", "Prof. (m)", "Tipo", "Data/Hora"])
             st.dataframe(df, use_container_width=True)
         else:
-            st.info("Nenum registro encontrado no banco de dados.")
+            st.info("Nenhum registro encontrado no banco de dados.")
