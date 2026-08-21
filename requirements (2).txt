@@ -1,0 +1,7 @@
+streamlit
+pandas
+
+# 2. Adiciona e envia o novo arquivo para o GitHub
+!git add requirements.txt
+!git commit -m "Adiciona requirements.txt para deploy no Streamlit Cloud"
+!git push origin main
