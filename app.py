@@ -25,8 +25,11 @@ SENHA_CORRETA = "1234"
 DB_NAME = "boafortuna_dados.db"
 
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
+    """Inicializa o banco de dados e executa migração automática caso faltem colunas de GPS."""
+    conn = sqlite3.connect(DB_NAME, timeout=10)
     c = conn.cursor()
+    
+    # 1. Tabela base de boletins
     c.execute('''
         CREATE TABLE IF NOT EXISTS boletins_campo (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,12 +44,22 @@ def init_db():
             furo_id TEXT UNIQUE,
             tipo_sondagem TEXT,
             profundidade_m REAL,
-            latitude REAL,
-            longitude REAL,
-            precisao_gps_m REAL,
             observacao TEXT
         )
     ''')
+    
+    # 2. MIGRAÇÃO AUTOMÁTICA: Adiciona colunas de GPS caso a tabela já existisse no servidor
+    c.execute("PRAGMA table_info(boletins_campo)")
+    colunas_existentes = [coluna[1] for coluna in c.fetchall()]
+    
+    if "latitude" not in colunas_existentes:
+        c.execute("ALTER TABLE boletins_campo ADD COLUMN latitude REAL")
+    if "longitude" not in colunas_existentes:
+        c.execute("ALTER TABLE boletins_campo ADD COLUMN longitude REAL")
+    if "precisao_gps_m" not in colunas_existentes:
+        c.execute("ALTER TABLE boletins_campo ADD COLUMN precisao_gps_m REAL")
+
+    # 3. Tabela de manobras de testemunho
     c.execute('''
         CREATE TABLE IF NOT EXISTS manobras_testemunho (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,11 +83,12 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Executa inicialização / migração ao carregar o aplicativo
 init_db()
 
-# --- COMPONENTE DE GEOLOCALIZAÇÃO GPS VIA HTML5 ---
+# --- COMPONENTE DE GEOLOCALIZAÇÃO GPS VIA BROWSER ---
 def obter_geolocalizacao_gps():
-    """Renderiza um componente HTML/JS para acessar a API de Geolocalização do navegador."""
+    """Renderiza um componente HTML/JS para capturar a posição exata da praça de sondagem via GPS."""
     componente_js = """
     <div style="font-family: Arial, sans-serif; text-align: center;">
         <button id="btnGps" type="button" style="
@@ -88,7 +102,7 @@ def obter_geolocalizacao_gps():
             width: 100%;
             font-size: 14px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        ">📍 Capturar Localização Exata (GPS)</button>
+        ">📍 Capturar Localização da Praça (GPS)</button>
         <p id="status" style="font-size: 12px; color: #64748b; margin-top: 6px; font-weight: 500;"></p>
     </div>
 
@@ -96,7 +110,7 @@ def obter_geolocalizacao_gps():
     document.getElementById('btnGps').addEventListener('click', function() {
         var status = document.getElementById('status');
         if (!navigator.geolocation) {
-            status.innerText = '❌ Geolocalização não é suportada pelo seu navegador.';
+            status.innerText = '❌ Geolocalização não é suportada pelo dispositivo.';
             return;
         }
         status.innerText = '⏳ Conectando aos satélites/GPS...';
@@ -108,7 +122,7 @@ def obter_geolocalizacao_gps():
                     lng: pos.coords.longitude.toFixed(6),
                     precisao: pos.coords.accuracy.toFixed(1)
                 };
-                status.innerText = '✅ Coordenadas Obtidas com Sucesso!';
+                status.innerText = '✅ Coordenadas da Praça Obtidas com Sucesso!';
                 window.parent.postMessage({
                     type: 'streamlit:setComponentValue',
                     value: JSON.stringify(coords)
@@ -117,14 +131,14 @@ def obter_geolocalizacao_gps():
             function(err) {
                 status.innerText = '⚠️ Erro ao obter GPS: ' + err.message;
             },
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
         );
     });
     </script>
     """
     return components.html(componente_js, height=85)
 
-# --- AUXILIARES PARA TRATAMENTO DE IMAGEM ---
+# --- AUXILIARES DE TRATAMENTO DE IMAGEM ---
 def otimizar_e_converter_bytes(img_pil, max_size=(1024, 1024), quality=80):
     if img_pil is None:
         return None
@@ -144,9 +158,9 @@ def bytes_para_pil(dados_blob):
     except Exception:
         return None
 
-# --- MANIPULAÇÃO DE BANCO DE DADOS ---
+# --- MANIPULAÇÃO DO BANCO DE DADOS ---
 def sincronizar_boletim_automatico(furo_id, prof_atingida):
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_NAME, timeout=10)
     c = conn.cursor()
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     
@@ -197,7 +211,7 @@ def sincronizar_boletim_automatico(furo_id, prof_atingida):
     conn.close()
 
 def salvar_boletim(empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, prof, lat, lng, prec, obs):
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_NAME, timeout=10)
     c = conn.cursor()
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     c.execute('''
@@ -216,7 +230,7 @@ def salvar_boletim(empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, 
     conn.close()
 
 def salvar_manobra(furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario, motivo, desc, fotos_pil=None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_NAME, timeout=10)
     c = conn.cursor()
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     
@@ -235,14 +249,14 @@ def salvar_manobra(furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario,
     sincronizar_boletim_automatico(furo, ate)
 
 def deletar_manobra(manobra_id):
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_NAME, timeout=10)
     c = conn.cursor()
     c.execute('DELETE FROM manobras_testemunho WHERE id = ?', (manobra_id,))
     conn.commit()
     conn.close()
 
 def buscar_manobras(furo_id=None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_NAME, timeout=10)
     c = conn.cursor()
     if furo_id:
         c.execute('SELECT id, de_m, ate_m, recup_m, taxa_recup_pct, num_caixa, horas_trab, horas_parado, descricao_litologica, foto1, foto2, foto3 FROM manobras_testemunho WHERE furo_id = ? ORDER BY id ASC', (furo_id,))
@@ -253,12 +267,16 @@ def buscar_manobras(furo_id=None):
     return dados
 
 def buscar_dados_furo(furo_id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute('SELECT latitude, longitude, precisao_gps_m FROM boletins_campo WHERE furo_id = ?', (furo_id,))
-    res = c.fetchone()
-    conn.close()
-    return res if res else (None, None, None)
+    """Busca com tratamento contra exceção para evitar travamentos."""
+    try:
+        conn = sqlite3.connect(DB_NAME, timeout=10)
+        c = conn.cursor()
+        c.execute('SELECT latitude, longitude, precisao_gps_m FROM boletins_campo WHERE furo_id = ?', (furo_id,))
+        res = c.fetchone()
+        conn.close()
+        return res if res else (None, None, None)
+    except Exception:
+        return (None, None, None)
 
 # --- GERADOR DE RELATÓRIO HTML IMPRESSÍVEL ---
 def gerar_html_boletim(furo_id, obs_fechamento=""):
@@ -273,7 +291,7 @@ def gerar_html_boletim(furo_id, obs_fechamento=""):
     lat = st.session_state.get("latitude", lat_db or "Não informada")
     lng = st.session_state.get("longitude", lng_db or "Não informada")
     
-    coord_str = f"Lat: {lat} | Lng: {lng}" if lat != "Não informada" else "Não informada"
+    coord_str = f"Lat: {lat} | Lng: {lng}" if lat != "Não informada" and lat is not None else "Não informada"
     
     manobras = buscar_manobras(furo_id)
     linhas_tabela = ""
@@ -328,7 +346,7 @@ def gerar_html_boletim(furo_id, obs_fechamento=""):
             <tr>
                 <td><b>Sondador Resp.:</b> {sondador}</td>
                 <td><b>Coordenador:</b> {coordenador}</td>
-                <td><b>GPS:</b> {coord_str}</td>
+                <td><b>GPS Praça:</b> {coord_str}</td>
             </tr>
         </table>
 
@@ -445,10 +463,10 @@ else:
 
     # ETAPA 1
     if opcao == "1. Cabeçalho e Empresa":
-        st.title("1. Cabeçalho de Identificação & Localização")
-        st.caption("Informações institucionais e georreferenciamento do furo.")
+        st.title("1. Cabeçalho de Identificação & GPS da Praça")
+        st.caption("Informações institucionais e georreferenciamento exato da praça de sondagem.")
         
-        st.markdown("### 🗺️ Localização Geográfica do Furo (GPS)")
+        st.markdown("### 🗺️ Localização Geográfica da Praça de Sondagem")
         col_gps1, col_gps2 = st.columns([1, 2])
         
         with col_gps1:
@@ -484,7 +502,7 @@ else:
                 st.session_state["data_campo"] = st.date_input("Data do Ensaio", value=st.session_state.get("data_campo", date.today()))
             
             if st.form_submit_button("Salvar Identificação"):
-                st.success("Dados do cabeçalho e geolocalização salvos na sessão!")
+                st.success("Dados do cabeçalho e GPS da praça salvos com sucesso!")
 
     # ETAPA 2
     elif opcao == "2. Equipe de Campo":
@@ -603,7 +621,7 @@ else:
         else:
             st.info("Nenhuma manobra cadastrada para este furo até o momento.")
 
-    # ETAPA 4 - DASHBOARD EXECUTIVO E PERFIL ESTRATIGRÁFICO
+    # ETAPA 4 - DASHBOARD EXECUTIVO
     elif opcao == "4. Fechamento de Turno & Dashboard":
         st.title("4. Dashboard Executivo & Perfil Geotécnico")
         st.caption("Análise estratigráfica vertical, indicadores de performance e emissão de boletim.")
@@ -653,7 +671,6 @@ else:
             col_g1, col_g2 = st.columns([1.2, 1])
 
             with col_g1:
-                # Perfil Litológico Vertical
                 fig_perfil = go.Figure()
                 for idx, row in df_g.iterrows():
                     fig_perfil.add_trace(go.Bar(
@@ -679,7 +696,6 @@ else:
                 st.plotly_chart(fig_perfil, use_container_width=True)
 
             with col_g2:
-                # Gráfico de Rosca de Produtividade Operacional
                 fig_horas = px.pie(
                     names=["Horas Trabalhadas", "Horas Paradas"],
                     values=[total_h_trab, total_h_parado],
@@ -746,7 +762,7 @@ else:
                 prof_sugerida = manobras_existentes[-1][2] if manobras_existentes else 0.0
                 profundidade = st.number_input("Profundidade Final (m)", min_value=0.0, step=0.5, value=float(prof_sugerida))
 
-            st.markdown("#### 🗺️ Coordenadas de GPS Registradas")
+            st.markdown("#### 🗺️ Coordenadas da Praça de Sondagem (GPS)")
             col_gps_f1, col_gps_f2, col_gps_f3 = st.columns(3)
             
             lat_atual = st.session_state.get("latitude", None)
