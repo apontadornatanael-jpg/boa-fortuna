@@ -9,6 +9,12 @@ import streamlit.components.v1 as components
 import plotly.express as px
 import plotly.graph_objects as go
 
+# --- IMPORTAÇÕES PARA GERAÇÃO NATIVA DE PDF (REPORTLAB) ---
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, KeepTogether
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
     page_title="Boa Fortuna - Sistema de Sondagem",
@@ -17,19 +23,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CREDENCIAIS DE ACESSO ---
 USUARIO_CORRETO = "admin"
 SENHA_CORRETA = "1234"
-
-# --- BANCO DE DADOS LOCAL (SQLITE) ---
 DB_NAME = "boafortuna_dados.db"
 
+# --- BANCO DE DADOS LOCAL (COM MIGRAÇÃO AUTOMÁTICA) ---
 def init_db():
-    """Inicializa o banco de dados e executa migração automática caso faltem colunas de GPS."""
     conn = sqlite3.connect(DB_NAME, timeout=10)
     c = conn.cursor()
-    
-    # 1. Tabela base de boletins
     c.execute('''
         CREATE TABLE IF NOT EXISTS boletins_campo (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,7 +49,6 @@ def init_db():
         )
     ''')
     
-    # 2. MIGRAÇÃO AUTOMÁTICA: Adiciona colunas de GPS caso a tabela já existisse no servidor
     c.execute("PRAGMA table_info(boletins_campo)")
     colunas_existentes = [coluna[1] for coluna in c.fetchall()]
     
@@ -59,7 +59,6 @@ def init_db():
     if "precisao_gps_m" not in colunas_existentes:
         c.execute("ALTER TABLE boletins_campo ADD COLUMN precisao_gps_m REAL")
 
-    # 3. Tabela de manobras de testemunho
     c.execute('''
         CREATE TABLE IF NOT EXISTS manobras_testemunho (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,24 +82,15 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Executa inicialização / migração ao carregar o aplicativo
 init_db()
 
 # --- COMPONENTE DE GEOLOCALIZAÇÃO GPS VIA BROWSER ---
 def obter_geolocalizacao_gps():
-    """Renderiza um componente HTML/JS para capturar a posição exata da praça de sondagem via GPS."""
     componente_js = """
     <div style="font-family: Arial, sans-serif; text-align: center;">
         <button id="btnGps" type="button" style="
-            background-color: #059669;
-            color: white;
-            border: none;
-            padding: 10px 18px;
-            font-weight: 600;
-            border-radius: 6px;
-            cursor: pointer;
-            width: 100%;
-            font-size: 14px;
+            background-color: #059669; color: white; border: none; padding: 10px 18px;
+            font-weight: 600; border-radius: 6px; cursor: pointer; width: 100%; font-size: 14px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         ">📍 Capturar Localização da Praça (GPS)</button>
         <p id="status" style="font-size: 12px; color: #64748b; margin-top: 6px; font-weight: 500;"></p>
@@ -128,9 +118,7 @@ def obter_geolocalizacao_gps():
                     value: JSON.stringify(coords)
                 }, '*');
             },
-            function(err) {
-                status.innerText = '⚠️ Erro ao obter GPS: ' + err.message;
-            },
+            function(err) { status.innerText = '⚠️ Erro ao obter GPS: ' + err.message; },
             { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
         );
     });
@@ -138,7 +126,7 @@ def obter_geolocalizacao_gps():
     """
     return components.html(componente_js, height=85)
 
-# --- AUXILIARES DE TRATAMENTO DE IMAGEM ---
+# --- AUXILIARES DE IMAGEM ---
 def otimizar_e_converter_bytes(img_pil, max_size=(1024, 1024), quality=80):
     if img_pil is None:
         return None
@@ -245,7 +233,6 @@ def salvar_manobra(furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario,
     ''', (furo, de, ate, recup, taxa, caixa, h_trab, h_parado, horario, motivo, desc, data_atual, f1, f2, f3))
     conn.commit()
     conn.close()
-    
     sincronizar_boletim_automatico(furo, ate)
 
 def deletar_manobra(manobra_id):
@@ -267,7 +254,6 @@ def buscar_manobras(furo_id=None):
     return dados
 
 def buscar_dados_furo(furo_id):
-    """Busca com tratamento contra exceção para evitar travamentos."""
     try:
         conn = sqlite3.connect(DB_NAME, timeout=10)
         c = conn.cursor()
@@ -278,9 +264,79 @@ def buscar_dados_furo(furo_id):
     except Exception:
         return (None, None, None)
 
-# --- GERADOR DE RELATÓRIO HTML IMPRESSÍVEL ---
-def gerar_html_boletim(furo_id, obs_fechamento=""):
-    empresa = st.session_state.get("empresa", "Boa Fortuna Perfurações e Sondagens")
+# --- GERADOR NATIVO DE PDF PROFISSIONAL (REPORTLAB) ---
+def gerar_pdf_boletim(furo_id, obs_fechamento=""):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=36,
+        leftMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
+    
+    styles = getSampleStyleSheet()
+    
+    # Estilos customizados
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        leading=18,
+        textColor=colors.HexColor('#1E3A8A'),
+        alignment=1,
+        fontName='Helvetica-Bold'
+    )
+    
+    subtitle_style = ParagraphStyle(
+        'DocSubTitle',
+        parent=styles['Normal'],
+        fontSize=10,
+        leading=12,
+        textColor=colors.HexColor('#475569'),
+        alignment=1,
+        fontName='Helvetica-Bold'
+    )
+    
+    section_heading = ParagraphStyle(
+        'SectionHeading',
+        parent=styles['Heading2'],
+        fontSize=12,
+        leading=14,
+        textColor=colors.HexColor('#1E3A8A'),
+        spaceBefore=10,
+        spaceAfter=5,
+        fontName='Helvetica-Bold'
+    )
+    
+    cell_style = ParagraphStyle(
+        'CellText',
+        parent=styles['Normal'],
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#1E293B')
+    )
+    
+    cell_header_style = ParagraphStyle(
+        'CellHeader',
+        parent=styles['Normal'],
+        fontSize=8,
+        leading=10,
+        textColor=colors.white,
+        fontName='Helvetica-Bold',
+        alignment=1
+    )
+
+    elements = []
+
+    # 1. Cabeçalho Principal
+    empresa = st.session_state.get("empresa", "BOA FORTUNA PERFURAÇÕES E SONDAGENS")
+    elements.append(Paragraph(empresa.upper(), title_style))
+    elements.append(Paragraph(f"BOLETIM DIÁRIO DE SONDAGEM (BDS) - IDENTIFICAÇÃO DO FURO: {furo_id}", subtitle_style))
+    elements.append(Spacer(1, 10))
+
+    # 2. Tabela de Informações da Praça e Equipe
     obra = st.session_state.get("obra", "-")
     cidade = st.session_state.get("cidade", "-")
     sondador = st.session_state.get("sondador", "-")
@@ -288,97 +344,152 @@ def gerar_html_boletim(furo_id, obs_fechamento=""):
     data_campo = str(st.session_state.get("data_campo", date.today()))
     
     lat_db, lng_db, prec_db = buscar_dados_furo(furo_id)
-    lat = st.session_state.get("latitude", lat_db or "Não informada")
-    lng = st.session_state.get("longitude", lng_db or "Não informada")
-    
-    coord_str = f"Lat: {lat} | Lng: {lng}" if lat != "Não informada" and lat is not None else "Não informada"
-    
+    lat = st.session_state.get("latitude", lat_db)
+    lng = st.session_state.get("longitude", lng_db)
+    coord_str = f"Lat: {lat:.6f} | Lng: {lng:.6f}" if lat and lng else "Não Informada"
+
+    info_data = [
+        [
+            Paragraph(f"<b>Cliente/Obra:</b> {obra}", cell_style),
+            Paragraph(f"<b>Cidade/UF:</b> {cidade}", cell_style),
+            Paragraph(f"<b>Data:</b> {data_campo}", cell_style)
+        ],
+        [
+            Paragraph(f"<b>Sondador Resp.:</b> {sondador}", cell_style),
+            Paragraph(f"<b>Coordenador:</b> {coordenador}", cell_style),
+            Paragraph(f"<b>Coordenadas GPS:</b> {coord_str}", cell_style)
+        ]
+    ]
+
+    table_info = Table(info_data, colWidths=[180, 180, 180])
+    table_info.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
+        ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#CBD5E1')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+    ]))
+    elements.append(table_info)
+    elements.append(Spacer(1, 12))
+
+    # 3. Tabela de Manobras e Avanço
+    elements.append(Paragraph("Avanço de Perfuração e Recuperação de Testemunhos", section_heading))
     manobras = buscar_manobras(furo_id)
-    linhas_tabela = ""
-    for m in manobras:
-        de, ate, rec, rec_pct, caixa, desc = m[1], m[2], m[3], m[4], m[5], m[8]
-        avanc = round(ate - de, 2)
-        linhas_tabela += f"""
-        <tr>
-            <td>{de:.2f}</td>
-            <td>{ate:.2f}</td>
-            <td>{avanc:.2f}</td>
-            <td>{rec:.2f}</td>
-            <td><b>{rec_pct:.1f}%</b></td>
-            <td>{caixa}</td>
-            <td style='text-align:left;'>{desc or '-'}</td>
-        </tr>
-        """
+    
+    manobras_headers = [
+        Paragraph("<b>De (m)</b>", cell_header_style),
+        Paragraph("<b>Até (m)</b>", cell_header_style),
+        Paragraph("<b>Avanço (m)</b>", cell_header_style),
+        Paragraph("<b>Rec. (m)</b>", cell_header_style),
+        Paragraph("<b>Rec. (%)</b>", cell_header_style),
+        Paragraph("<b>Caixa</b>", cell_header_style),
+        Paragraph("<b>Descrição Litológica</b>", cell_header_style)
+    ]
+    
+    manobras_rows = [manobras_headers]
+    
+    total_avanco = 0
+    total_recup = 0
 
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>Boletim Diário de Sondagem - {furo_id}</title>
-        <style>
-            body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 30px; color: #1e293b; }}
-            .header {{ text-align: center; border-bottom: 3px solid #1E3A8A; padding-bottom: 10px; margin-bottom: 20px; }}
-            .header h2 {{ color: #1E3A8A; margin: 0; font-size: 24px; text-transform: uppercase; }}
-            .header h4 {{ color: #64748b; margin: 5px 0 0 0; font-weight: 500; }}
-            .box-info {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; background: #f8fafc; border-radius: 6px; overflow: hidden; }}
-            .box-info td {{ padding: 10px 12px; border: 1px solid #e2e8f0; font-size: 13px; }}
-            .tabela-dados {{ width: 100%; border-collapse: collapse; margin-top: 10px; text-align: center; }}
-            .tabela-dados th {{ background: #1E3A8A; color: white; padding: 10px; font-size: 12px; text-transform: uppercase; }}
-            .tabela-dados td {{ padding: 8px; border: 1px solid #e2e8f0; font-size: 12px; }}
-            .tabela-dados tr:nth-child(even) {{ background-color: #f8fafc; }}
-            .obs {{ margin-top: 20px; padding: 15px; border-left: 4px solid #1E3A8A; background: #f1f5f9; font-size: 13px; border-radius: 0 6px 6px 0; }}
-            .footer {{ margin-top: 40px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 10px; }}
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h2>{empresa}</h2>
-            <h4>BOLETIM DIÁRIO DE SONDAGEM (BDS) • IDENTIFICAÇÃO: {furo_id}</h4>
-        </div>
-        
-        <table class="box-info">
-            <tr>
-                <td><b>Cliente/Obra:</b> {obra}</td>
-                <td><b>Cidade/UF:</b> {cidade}</td>
-                <td><b>Data do Ensaio:</b> {data_campo}</td>
-            </tr>
-            <tr>
-                <td><b>Sondador Resp.:</b> {sondador}</td>
-                <td><b>Coordenador:</b> {coordenador}</td>
-                <td><b>GPS Praça:</b> {coord_str}</td>
-            </tr>
-        </table>
+    if manobras:
+        for m in manobras:
+            de, ate, rec, rec_pct, caixa, desc = m[1], m[2], m[3], m[4], m[5], m[8]
+            avanc = round(ate - de, 2)
+            total_avanco += avanc
+            total_recup += rec
+            
+            manobras_rows.append([
+                Paragraph(f"{de:.2f}", cell_style),
+                Paragraph(f"{ate:.2f}", cell_style),
+                Paragraph(f"{avanc:.2f}", cell_style),
+                Paragraph(f"{rec:.2f}", cell_style),
+                Paragraph(f"<b>{rec_pct:.1f}%</b>", cell_style),
+                Paragraph(str(caixa), cell_style),
+                Paragraph(desc or "-", cell_style)
+            ])
+            
+        taxa_media_global = (total_recup / total_avanco * 100) if total_avanco > 0 else 0.0
+        manobras_rows.append([
+            Paragraph("<b>TOTAL</b>", cell_style),
+            Paragraph(f"<b>{manobras[-1][2]:.2f}m</b>", cell_style),
+            Paragraph(f"<b>{total_avanco:.2f}m</b>", cell_style),
+            Paragraph(f"<b>{total_recup:.2f}m</b>", cell_style),
+            Paragraph(f"<b>{taxa_media_global:.1f}%</b>", cell_style),
+            Paragraph("-", cell_style),
+            Paragraph("<b>Resumo Acumulado do Turno</b>", cell_style)
+        ])
 
-        <h3 style="color:#1E3A8A; font-size: 16px; margin-bottom: 8px;">Avanço e Recuperação de Testemunhos</h3>
-        <table class="tabela-dados">
-            <thead>
-                <tr>
-                    <th>De (m)</th>
-                    <th>Até (m)</th>
-                    <th>Avanço (m)</th>
-                    <th>Recup. (m)</th>
-                    <th>Recup. (%)</th>
-                    <th>Caixa</th>
-                    <th>Descrição Litológica</th>
-                </tr>
-            </thead>
-            <tbody>
-                {linhas_tabela}
-            </tbody>
-        </table>
+    table_manobras = Table(manobras_rows, colWidths=[45, 45, 55, 50, 50, 45, 250])
+    table_manobras.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#F8FAFC')]),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#E2E8F0')),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+    ]))
+    elements.append(table_manobras)
+    elements.append(Spacer(1, 10))
 
-        <div class="obs">
-            <b>Observações de Fechamento de Turno:</b><br>{obs_fechamento or 'Nenhuma observação informada.'}
-        </div>
+    # 4. Observações de Campo
+    if obs_fechamento:
+        elements.append(Paragraph("Observações / Ocorrências de Campo", section_heading))
+        obs_table = Table([[Paragraph(obs_fechamento, cell_style)]], colWidths=[540])
+        obs_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F1F5F9')),
+            ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#CBD5E1')),
+            ('TOPPADDING', (0,0), (-1,-1), 8),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        ]))
+        elements.append(obs_table)
+        elements.append(Spacer(1, 10))
 
-        <div class="footer">
-            Relatório gerado automaticamente via Sistema Boa Fortuna - Processado em {datetime.now().strftime("%d/%m/%Y às %H:%M")}
-        </div>
-    </body>
-    </html>
-    """
-    return html
+    # 5. Anexo Fotográfico (Testemunhos de Campo)
+    imagens_relatorio = []
+    if manobras:
+        for m in manobras:
+            for blob in [m[9], m[10], m[11]]:
+                if blob:
+                    try:
+                        img_pil = Image.open(io.BytesIO(blob))
+                        img_buf = io.BytesIO()
+                        img_pil.save(img_buf, format='JPEG')
+                        img_buf.seek(0)
+                        # Redimensiona mantendo a proporção para caber em grid no PDF
+                        rl_img = RLImage(img_buf, width=165, height=120)
+                        imagens_relatorio.append(rl_img)
+                    except Exception:
+                        pass
+
+    if imagens_relatorio:
+        elements.append(Paragraph("Anexo Fotográfico de Testemunhos", section_heading))
+        grid_fotos = []
+        row_temp = []
+        for img in imagens_relatorio:
+            row_temp.append(img)
+            if len(row_temp) == 3:
+                grid_fotos.append(row_temp)
+                row_temp = []
+        if row_temp:
+            while len(row_temp) < 3:
+                row_temp.append(Paragraph("", cell_style))
+            grid_fotos.append(row_temp)
+
+        table_fotos = Table(grid_fotos, colWidths=[180, 180, 180])
+        table_fotos.setStyle(TableStyle([
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('TOPPADDING', (0,0), (-1,-1), 6),
+        ]))
+        elements.append(KeepTogether([table_fotos]))
+
+    # Constrói o PDF completo
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 # --- ESTADO DA SESSÃO ---
 if "logado" not in st.session_state:
@@ -624,7 +735,7 @@ else:
     # ETAPA 4 - DASHBOARD EXECUTIVO
     elif opcao == "4. Fechamento de Turno & Dashboard":
         st.title("4. Dashboard Executivo & Perfil Geotécnico")
-        st.caption("Análise estratigráfica vertical, indicadores de performance e emissão de boletim.")
+        st.caption("Análise estratigráfica vertical, indicadores de performance e emissão de boletim em PDF.")
 
         furo_fechamento = st.text_input("Identificação do Furo", value=st.session_state.get("furo_id", "SP-01"))
         manobras = buscar_manobras(furo_fechamento)
@@ -652,9 +763,8 @@ else:
             for m in manobras:
                 de, ate, rec, rec_pct, caixa, h_tr, h_par, desc = m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]
                 avanc = round(ate - de, 2)
-                intervalo = f"{de:.2f}m - {ate:.2f}m"
                 dados_grafico.append({
-                    "Intervalo": intervalo,
+                    "Intervalo": f"{de:.2f}m - {ate:.2f}m",
                     "De (m)": de,
                     "Até (m)": ate,
                     "Avanço (m)": avanc,
@@ -728,17 +838,18 @@ else:
 
             st.divider()
 
-            # --- EMISSÃO DE RELATÓRIO ---
-            st.subheader("📄 Emissão de Boletim Diário de Sondagem")
+            # --- EMISSÃO DO BOLETIM EM PDF ---
+            st.subheader("📄 Emissão do Boletim Oficial em PDF")
             obs_fechamento = st.text_area("Observações Finais do Turno / Ocorrências de Campo", placeholder="Ex: Paralisação por chuva das 14h às 15h. Troca de coroa realizada.")
 
-            html_conteudo = gerar_html_boletim(furo_fechamento, obs_fechamento)
+            # Gera o PDF via ReportLab em memória
+            pdf_bytes = gerar_pdf_boletim(furo_fechamento, obs_fechamento)
 
             st.download_button(
-                label="📥 Baixar Boletim Oficial de Sondagem (HTML / Imprimir em PDF)",
-                data=html_conteudo,
-                file_name=f"Boletim_{furo_fechamento}_{date.today().strftime('%Y%m%d')}.html",
-                mime="text/html",
+                label="📥 Baixar Boletim Oficial de Sondagem em PDF",
+                data=pdf_bytes,
+                file_name=f"Boletim_{furo_fechamento}_{date.today().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
                 use_container_width=True
             )
         else:
