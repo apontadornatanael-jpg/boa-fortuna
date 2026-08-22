@@ -4,6 +4,8 @@ from datetime import datetime, date
 import pandas as pd
 from PIL import Image
 import io
+import json
+import streamlit.components.v1 as components
 import plotly.express as px
 import plotly.graph_objects as go
 
@@ -39,6 +41,9 @@ def init_db():
             furo_id TEXT UNIQUE,
             tipo_sondagem TEXT,
             profundidade_m REAL,
+            latitude REAL,
+            longitude REAL,
+            precisao_gps_m REAL,
             observacao TEXT
         )
     ''')
@@ -67,9 +72,60 @@ def init_db():
 
 init_db()
 
+# --- COMPONENTE DE GEOLOCALIZAÇÃO GPS VIA HTML5 ---
+def obter_geolocalizacao_gps():
+    """Renderiza um componente HTML/JS para acessar a API de Geolocalização do navegador."""
+    componente_js = """
+    <div style="font-family: Arial, sans-serif; text-align: center;">
+        <button id="btnGps" type="button" style="
+            background-color: #059669;
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            width: 100%;
+            font-size: 14px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        ">📍 Capturar Localização Exata (GPS)</button>
+        <p id="status" style="font-size: 12px; color: #64748b; margin-top: 6px; font-weight: 500;"></p>
+    </div>
+
+    <script>
+    document.getElementById('btnGps').addEventListener('click', function() {
+        var status = document.getElementById('status');
+        if (!navigator.geolocation) {
+            status.innerText = '❌ Geolocalização não é suportada pelo seu navegador.';
+            return;
+        }
+        status.innerText = '⏳ Conectando aos satélites/GPS...';
+        
+        navigator.geolocation.getCurrentPosition(
+            function(pos) {
+                var coords = {
+                    lat: pos.coords.latitude.toFixed(6),
+                    lng: pos.coords.longitude.toFixed(6),
+                    precisao: pos.coords.accuracy.toFixed(1)
+                };
+                status.innerText = '✅ Coordenadas Obtidas com Sucesso!';
+                window.parent.postMessage({
+                    type: 'streamlit:setComponentValue',
+                    value: JSON.stringify(coords)
+                }, '*');
+            },
+            function(err) {
+                status.innerText = '⚠️ Erro ao obter GPS: ' + err.message;
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+    });
+    </script>
+    """
+    return components.html(componente_js, height=85)
+
 # --- AUXILIARES PARA TRATAMENTO DE IMAGEM ---
 def otimizar_e_converter_bytes(img_pil, max_size=(1024, 1024), quality=80):
-    """Comprime e redimensiona a imagem antes de salvar no banco como BLOB."""
     if img_pil is None:
         return None
     img = img_pil.copy()
@@ -102,6 +158,9 @@ def sincronizar_boletim_automatico(furo_id, prof_atingida):
     sondador = st.session_state.get("sondador", "-")
     auxiliares = st.session_state.get("auxiliares", "-")
     tipo_sondagem = st.session_state.get("tipo_sondagem", "Rotativa")
+    lat = st.session_state.get("latitude", None)
+    lng = st.session_state.get("longitude", None)
+    precisao = st.session_state.get("precisao_gps", None)
     
     c.execute('SELECT id, profundidade_m FROM boletins_campo WHERE furo_id = ?', (furo_id,))
     existe = c.fetchone()
@@ -117,37 +176,42 @@ def sincronizar_boletim_automatico(furo_id, prof_atingida):
                 coordenador = CASE WHEN ? != '-' THEN ? ELSE coordenador END,
                 supervisor = CASE WHEN ? != '-' THEN ? ELSE supervisor END,
                 auxiliares = CASE WHEN ? != '-' THEN ? ELSE auxiliares END,
+                latitude = COALESCE(?, latitude),
+                longitude = COALESCE(?, longitude),
+                precisao_gps_m = COALESCE(?, precisao_gps_m),
                 data_registro = ?
             WHERE furo_id = ?
         ''', (
             prof_atingida, empresa, empresa, obra, obra, cidade, cidade,
             sondador, sondador, coordenador, coordenador, supervisor, supervisor,
-            auxiliares, auxiliares, data_atual, furo_id
+            auxiliares, auxiliares, lat, lng, precisao, data_atual, furo_id
         ))
     else:
         c.execute('''
             INSERT INTO boletins_campo 
-            (data_registro, empresa, obra_cliente, cidade_uf, coordenador, supervisor, sondador, auxiliares, furo_id, tipo_sondagem, profundidade_m, observacao)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (data_atual, empresa, obra, cidade, coordenador, supervisor, sondador, auxiliares, furo_id, tipo_sondagem, prof_atingida, "Sincronizado via manobras"))
+            (data_registro, empresa, obra_cliente, cidade_uf, coordenador, supervisor, sondador, auxiliares, furo_id, tipo_sondagem, profundidade_m, latitude, longitude, precisao_gps_m, observacao)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (data_atual, empresa, obra, cidade, coordenador, supervisor, sondador, auxiliares, furo_id, tipo_sondagem, prof_atingida, lat, lng, precisao, "Sincronizado via manobras"))
     
     conn.commit()
     conn.close()
 
-def salvar_boletim(empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, prof, obs):
+def salvar_boletim(empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, prof, lat, lng, prec, obs):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     c.execute('''
         INSERT INTO boletins_campo 
-        (data_registro, empresa, obra_cliente, cidade_uf, coordenador, supervisor, sondador, auxiliares, furo_id, tipo_sondagem, profundidade_m, observacao)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (data_registro, empresa, obra_cliente, cidade_uf, coordenador, supervisor, sondador, auxiliares, furo_id, tipo_sondagem, profundidade_m, latitude, longitude, precisao_gps_m, observacao)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(furo_id) DO UPDATE SET
             empresa=excluded.empresa, obra_cliente=excluded.obra_cliente, cidade_uf=excluded.cidade_uf,
             coordenador=excluded.coordenador, supervisor=excluded.supervisor, sondador=excluded.sondador,
             auxiliares=excluded.auxiliares, tipo_sondagem=excluded.tipo_sondagem, profundidade_m=excluded.profundidade_m,
+            latitude=COALESCE(excluded.latitude, latitude), longitude=COALESCE(excluded.longitude, longitude),
+            precisao_gps_m=COALESCE(excluded.precisao_gps_m, precisao_gps_m),
             observacao=excluded.observacao, data_registro=excluded.data_registro
-    ''', (data_atual, empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, prof, obs))
+    ''', (data_atual, empresa, obra, cidade, coord, superv, sond, aux, furo, tipo, prof, lat, lng, prec, obs))
     conn.commit()
     conn.close()
 
@@ -188,6 +252,14 @@ def buscar_manobras(furo_id=None):
     conn.close()
     return dados
 
+def buscar_dados_furo(furo_id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('SELECT latitude, longitude, precisao_gps_m FROM boletins_campo WHERE furo_id = ?', (furo_id,))
+    res = c.fetchone()
+    conn.close()
+    return res if res else (None, None, None)
+
 # --- GERADOR DE RELATÓRIO HTML IMPRESSÍVEL ---
 def gerar_html_boletim(furo_id, obs_fechamento=""):
     empresa = st.session_state.get("empresa", "Boa Fortuna Perfurações e Sondagens")
@@ -196,6 +268,12 @@ def gerar_html_boletim(furo_id, obs_fechamento=""):
     sondador = st.session_state.get("sondador", "-")
     coordenador = st.session_state.get("coordenador", "-")
     data_campo = str(st.session_state.get("data_campo", date.today()))
+    
+    lat_db, lng_db, prec_db = buscar_dados_furo(furo_id)
+    lat = st.session_state.get("latitude", lat_db or "Não informada")
+    lng = st.session_state.get("longitude", lng_db or "Não informada")
+    
+    coord_str = f"Lat: {lat} | Lng: {lng}" if lat != "Não informada" else "Não informada"
     
     manobras = buscar_manobras(furo_id)
     linhas_tabela = ""
@@ -250,7 +328,7 @@ def gerar_html_boletim(furo_id, obs_fechamento=""):
             <tr>
                 <td><b>Sondador Resp.:</b> {sondador}</td>
                 <td><b>Coordenador:</b> {coordenador}</td>
-                <td><b>Furo ID:</b> {furo_id}</td>
+                <td><b>GPS:</b> {coord_str}</td>
             </tr>
         </table>
 
@@ -367,9 +445,35 @@ else:
 
     # ETAPA 1
     if opcao == "1. Cabeçalho e Empresa":
-        st.title("1. Cabeçalho de Identificação")
-        st.caption("Informações institucionais e localização geográfica do projeto.")
+        st.title("1. Cabeçalho de Identificação & Localização")
+        st.caption("Informações institucionais e georreferenciamento do furo.")
         
+        st.markdown("### 🗺️ Localização Geográfica do Furo (GPS)")
+        col_gps1, col_gps2 = st.columns([1, 2])
+        
+        with col_gps1:
+            gps_json = obter_geolocalizacao_gps()
+            if gps_json:
+                try:
+                    coords = json.loads(gps_json)
+                    st.session_state["latitude"] = float(coords["lat"])
+                    st.session_state["longitude"] = float(coords["lng"])
+                    st.session_state["precisao_gps"] = float(coords["precisao"])
+                except Exception:
+                    pass
+
+        with col_gps2:
+            c_lat, c_lng, c_acc = st.columns(3)
+            lat_val = st.session_state.get("latitude", "")
+            lng_val = st.session_state.get("longitude", "")
+            acc_val = st.session_state.get("precisao_gps", "")
+            
+            c_lat.text_input("Latitude", value=str(lat_val) if lat_val else "", key="lat_input")
+            c_lng.text_input("Longitude", value=str(lng_val) if lng_val else "", key="lng_input")
+            c_acc.text_input("Precisão (m)", value=f"{acc_val} m" if acc_val else "", key="acc_input")
+
+        st.divider()
+
         with st.form("form_cabecalho"):
             col1, col2 = st.columns(2)
             with col1:
@@ -380,7 +484,7 @@ else:
                 st.session_state["data_campo"] = st.date_input("Data do Ensaio", value=st.session_state.get("data_campo", date.today()))
             
             if st.form_submit_button("Salvar Identificação"):
-                st.success("Dados do cabeçalho salvos com sucesso na sessão!")
+                st.success("Dados do cabeçalho e geolocalização salvos na sessão!")
 
     # ETAPA 2
     elif opcao == "2. Equipe de Campo":
@@ -549,7 +653,7 @@ else:
             col_g1, col_g2 = st.columns([1.2, 1])
 
             with col_g1:
-                # Perfil Litológico Vertical com Eixo Invertido (Padrão Geotécnico)
+                # Perfil Litológico Vertical
                 fig_perfil = go.Figure()
                 for idx, row in df_g.iterrows():
                     fig_perfil.add_trace(go.Bar(
@@ -566,7 +670,7 @@ else:
                     title="<b>Perfil Estratigráfico Vertical (Avanço & Litologia)</b>",
                     xaxis_title="Avanço Perfurado (m)",
                     yaxis_title="Profundidade do Furo",
-                    yaxis=dict(autorange="reversed"), # Inverte o eixo Y para o furo descer
+                    yaxis=dict(autorange="reversed"),
                     barmode='stack',
                     showlegend=False,
                     height=450,
@@ -642,6 +746,20 @@ else:
                 prof_sugerida = manobras_existentes[-1][2] if manobras_existentes else 0.0
                 profundidade = st.number_input("Profundidade Final (m)", min_value=0.0, step=0.5, value=float(prof_sugerida))
 
+            st.markdown("#### 🗺️ Coordenadas de GPS Registradas")
+            col_gps_f1, col_gps_f2, col_gps_f3 = st.columns(3)
+            
+            lat_atual = st.session_state.get("latitude", None)
+            lng_atual = st.session_state.get("longitude", None)
+            prec_atual = st.session_state.get("precisao_gps", None)
+            
+            with col_gps_f1:
+                lat_input = st.number_input("Latitude Decimal", value=float(lat_atual) if lat_atual else 0.0, format="%.6f")
+            with col_gps_f2:
+                lng_input = st.number_input("Longitude Decimal", value=float(lng_atual) if lng_atual else 0.0, format="%.6f")
+            with col_gps_f3:
+                prec_input = st.number_input("Precisão do GPS (m)", value=float(prec_atual) if prec_atual else 0.0, format="%.1f")
+
             obs = st.text_area("Observações Geotécnicas / Nível d'Água (N.A.)", placeholder="Registros do nível d'água, perda de água de circulação, etc...")
 
             btn_finalizar = st.form_submit_button("Salvar Ajustes do Boletim", use_container_width=True)
@@ -656,7 +774,11 @@ else:
                         st.session_state.get("supervisor", "-"),
                         st.session_state.get("sondador", "-"),
                         st.session_state.get("auxiliares", "-"),
-                        furo, tipo_sondagem, profundidade, obs
+                        furo, tipo_sondagem, profundidade,
+                        lat_input if lat_input != 0.0 else None,
+                        lng_input if lng_input != 0.0 else None,
+                        prec_input if prec_input != 0.0 else None,
+                        obs
                     )
                     st.success(f"Boletim do furo {furo} atualizado com sucesso!")
                 else:
