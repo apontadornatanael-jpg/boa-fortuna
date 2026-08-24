@@ -1,6 +1,6 @@
 import streamlit as st 
 import sqlite3 
-from datetime import datetime, date 
+from datetime import datetime, date, time, timedelta
 import pandas as pd 
 from PIL import Image 
 import io 
@@ -80,7 +80,6 @@ def init_db():
         )  
     ''')  
 
-    # Migração para garantir que todos os novos campos solicitados existam na tabela manobras_testemunho
     c.execute("PRAGMA table_info(manobras_testemunho)")
     colunas_existentes_m = [coluna[1] for coluna in c.fetchall()]
 
@@ -104,27 +103,20 @@ def init_db():
 
 init_db()  
 
-# --- COMPONENTE DE GEOLOCALIZAÇÃO GPS VIA BROWSER --- 
-def obter_geolocalizacao_gps():  
+# --- COMPONENTE DE GEOLOCALIZAÇÃO GPS AUTOMÁTICA VIA BROWSER --- 
+def obter_geolocalizacao_gps_auto():  
     componente_js = """  
-    <div style="font-family: Arial, sans-serif; text-align: center;">  
-        <button id="btnGps" type="button" style="  
-            background-color: #059669; color: white; border: none; padding: 10px 18px;  
-            font-weight: 600; border-radius: 6px; cursor: pointer; width: 100%; font-size: 14px;  
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);  
-        ">📍 Capturar Localização da Praça (GPS)</button>  
-        <p id="status" style="font-size: 12px; color: #64748b; margin-top: 6px; font-weight: 500;"></p>  
+    <div style="font-family: Arial, sans-serif; text-align: center; padding: 5px;">  
+        <p id="status" style="font-size: 13px; color: #0284c7; margin: 0; font-weight: 600;">📡 Buscando sinal GPS automaticamente...</p>  
     </div>  
       
     <script>  
-    document.getElementById('btnGps').addEventListener('click', function() {  
+    function capturarGPS() {
         var status = document.getElementById('status');  
         if (!navigator.geolocation) {  
-            status.innerText = '❌ Geolocalização não é suportada pelo dispositivo.';  
+            status.innerText = '❌ Geolocalização não é suportada pelo navegador.';  
             return;  
         }  
-        status.innerText = '⏳ Conectando aos satélites/GPS...';  
-                  
         navigator.geolocation.getCurrentPosition(  
             function(pos) {  
                 var coords = {  
@@ -132,19 +124,24 @@ def obter_geolocalizacao_gps():
                     lng: pos.coords.longitude.toFixed(6),  
                     precisao: pos.coords.accuracy.toFixed(1)  
                 };  
-                status.innerText = '✅ Coordenadas da Praça Obtidas com Sucesso!';  
+                status.innerText = '✅ GPS Capturado: ' + coords.lat + ', ' + coords.lng + ' (±' + coords.precisao + 'm)';  
                 window.parent.postMessage({  
                     type: 'streamlit:setComponentValue',  
                     value: JSON.stringify(coords)  
                 }, '*');  
             },  
-            function(err) { status.innerText = '⚠️ Erro ao obter GPS: ' + err.message; },  
-            { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }  
+            function(err) { 
+                status.innerText = '⚠️ Erro ao obter GPS: ' + err.message; 
+            },  
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }  
         );  
-    });  
+    }
+    
+    // Dispara a captura assim que carrega
+    window.onload = capturarGPS;
     </script>  
     """  
-    return components.html(componente_js, height=85)  
+    return components.html(componente_js, height=45)  
 
 # --- AUXILIARES DE IMAGEM --- 
 def otimizar_e_converter_bytes(img_pil, max_size=(1024, 1024), quality=80):  
@@ -250,7 +247,7 @@ def buscar_manobras(furo_id=None):
         c.execute('''
             SELECT id, furo_id, data_manobra, de_m, ate_m, avanco_m, recup_m, taxa_recup_pct, 
                    num_caixa, barrilete, horario_inicio, horario_fim, tempo_manobra, 
-                   descricao_litologica, observacoes, operador_sonda, foto1, foto2, foto3 
+                   descricao_litologica, observacoes, operador_sonda, foto1, foto2, foto3, horas_trab, horas_parado
             FROM manobras_testemunho 
             WHERE furo_id = ? ORDER BY id ASC
         ''', (furo_id,))  
@@ -258,7 +255,7 @@ def buscar_manobras(furo_id=None):
         c.execute('''
             SELECT id, furo_id, data_manobra, de_m, ate_m, avanco_m, recup_m, taxa_recup_pct, 
                    num_caixa, barrilete, horario_inicio, horario_fim, tempo_manobra, 
-                   descricao_litologica, observacoes, operador_sonda, data_registro 
+                   descricao_litologica, observacoes, operador_sonda, data_registro, horas_trab, horas_parado
             FROM manobras_testemunho ORDER BY id DESC
         ''')  
     dados = c.fetchall()  
@@ -545,31 +542,29 @@ else:
     # ETAPA 1  
     if opcao == "1. Cabeçalho e Empresa":  
         st.title("1. Cabeçalho de Identificação & GPS da Praça")  
-        st.caption("Informações institucionais e georreferenciamento exato da praça de sondagem.")  
+        st.caption("Informações institucionais e georreferenciamento automático da praça de sondagem.")  
                   
-        st.markdown("### 🗺️ Localização Geográfica da Praça de Sondagem")  
-        col_gps1, col_gps2 = st.columns([1, 2])  
-                  
-        with col_gps1:  
-            gps_json = obter_geolocalizacao_gps()  
-            if gps_json:  
-                try:  
-                    coords = json.loads(gps_json)  
-                    st.session_state["latitude"] = float(coords["lat"])  
-                    st.session_state["longitude"] = float(coords["lng"])  
-                    st.session_state["precisao_gps"] = float(coords["precisao"])  
-                except Exception:  
-                    pass  
+        st.markdown("### 🗺️ Localização Geográfica da Praça (Automática)")  
+        
+        # Componente que faz o rastreio automático do GPS via navegador
+        gps_json = obter_geolocalizacao_gps_auto()  
+        if gps_json:  
+            try:  
+                coords = json.loads(gps_json)  
+                st.session_state["latitude"] = float(coords["lat"])  
+                st.session_state["longitude"] = float(coords["lng"])  
+                st.session_state["precisao_gps"] = float(coords["precisao"])  
+            except Exception:  
+                pass  
           
-        with col_gps2:  
-            c_lat, c_lng, c_acc = st.columns(3)  
-            lat_val = st.session_state.get("latitude", "")  
-            lng_val = st.session_state.get("longitude", "")  
-            acc_val = st.session_state.get("precisao_gps", "")  
-                          
-            c_lat.text_input("Latitude", value=str(lat_val) if lat_val else "", key="lat_input")  
-            c_lng.text_input("Longitude", value=str(lng_val) if lng_val else "", key="lng_input")  
-            c_acc.text_input("Precisão (m)", value=f"{acc_val} m" if acc_val else "", key="acc_input")  
+        col_gps1, col_gps2, col_gps3 = st.columns(3)
+        lat_val = st.session_state.get("latitude", "")  
+        lng_val = st.session_state.get("longitude", "")  
+        acc_val = st.session_state.get("precisao_gps", "")  
+                      
+        col_gps1.text_input("Latitude", value=str(lat_val) if lat_val else "Aguardando GPS...", key="lat_input", disabled=True)  
+        col_gps2.text_input("Longitude", value=str(lng_val) if lng_val else "Aguardando GPS...", key="lng_input", disabled=True)  
+        col_gps3.text_input("Precisão (m)", value=f"{acc_val} m" if acc_val else "Aguardando...", key="acc_input", disabled=True)  
           
         st.divider()  
           
@@ -605,7 +600,7 @@ else:
     # ETAPA 3  
     elif opcao == "3. Registro de Manobra e Testemunho":  
         st.title("3. Registro de Manobra e Testemunho")  
-        st.caption("Lançamento do avanço, recuperação de amostra, caixas e registro fotográfico de campo.")  
+        st.caption("Lançamento automatizado do avanço, recuperação, caixas e tempos operacionais.")  
                   
         furo_atual = st.text_input("Informação - Furo (Identificação)", value=st.session_state.get("furo_id", "SP-01"), key="input_furo_manobra")  
         st.session_state["furo_id"] = furo_atual  
@@ -615,89 +610,109 @@ else:
         prox_ate = round(prox_de + 1.5, 2)  
                   
         st.info(f"📍 Profundidade Atual Perfurada para o Furo **{furo_atual}**: **{prox_de:.2f} m**")  
+        
+        # --- CÁLCULOS DINÂMICOS DE TEMPO E PROFUNDIDADE ---
+        hora_atual = datetime.now().time()
+        hora_inicio_padrao = (datetime.now() - timedelta(hours=1, minutes=30)).time() if not manobras_furo else datetime.now().time()
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            data_manobra = st.date_input("Data", value=date.today())
+        with c2:
+            barrilete = st.text_input("Barrilete", value="HQ")
+        with c3:
+            operador_sonda = st.text_input("Operador Sonda", value=st.session_state.get("sondador", ""))
+
+        c4, c5, c6, c7 = st.columns(4)  
+        with c4:  
+            de_m = st.number_input("Profundidade Inicial (m)", min_value=0.0, step=0.5, value=float(prox_de), format="%.2f")  
+        with c5:  
+            ate_m = st.number_input("Profundidade Final (m)", min_value=0.0, step=0.5, value=float(prox_ate), format="%.2f")  
+        with c6:  
+            recup_m = st.number_input("Recuperação (m)", min_value=0.0, step=0.1, value=round(max(0.0, ate_m - de_m), 2), format="%.2f")  
+        with c7:  
+            num_caixa = st.text_input("Caixa", value=manobras_furo[-1][8] if manobras_furo else "01")  
+
+        # Métricas calculadas automaticamente
+        avanco_calc = round(max(0.0, ate_m - de_m), 2)
+        taxa_recup = min(100.0, round((recup_m / avanco_calc * 100), 1)) if avanco_calc > 0 else 0.0  
+
+        st.caption(f"⚡ **Avanço Calculado:** {avanco_calc:.2f} m | **Taxa de Recuperação:** {taxa_recup:.1f}%")
+
+        c8, c9, c10 = st.columns(3)
+        with c8:
+            horario_inicio = st.time_input("Horário Início", value=hora_inicio_padrao)
+        with c9:
+            horario_fim = st.time_input("Horário Fim (Auto)", value=hora_atual)
+            
+        # Cálculo automático de horas trabalhadas e tempo de manobra
+        dt_ini = datetime.combine(date.today(), horario_inicio)
+        dt_fim = datetime.combine(date.today(), horario_fim)
+        
+        if dt_fim < dt_ini:
+            dt_fim += timedelta(days=1)
+            
+        diferenca_segundos = (dt_fim - dt_ini).total_seconds()
+        horas_trabalhadas = round(diferenca_segundos / 3600.0, 2)
+        minutos_totais = int(diferenca_segundos // 60)
+        horas_fmt = minutos_totais // 60
+        mins_fmt = minutos_totais % 60
+        tempo_manobra_auto = f"{horas_fmt:02d}h {mins_fmt:02d}m"
+
+        with c10:
+            st.text_input("Tempo de Manobra (Auto)", value=tempo_manobra_auto, disabled=True)
+
+        c11, c12, c13 = st.columns(3)
+        with c11:
+            desc_litologica = st.text_input("Litologia", placeholder="Ex: Solo residual, rocha alterada...")  
+        with c12:
+            observacoes = st.text_input("Observações", placeholder="Ex: Perda de água, troca de coroa...")  
+        with c13:
+            horas_paradas = st.number_input("Horas Paradas / Interrupções", min_value=0.0, step=0.25, value=0.0)
+
+        st.markdown("---")  
+        st.subheader("Registro Fotográfico (Até 3 Fotos)")  
+                      
+        tab_galeria, tab_camera = st.tabs(["📁 Selecionar da Galeria", "📸 Câmera ao Vivo"])  
+        fotos_manobra_pil = []  
+                      
+        with tab_galeria:  
+            fotos_upload = st.file_uploader("Upload de imagens de campo", type=["jpg", "png", "jpeg"], accept_multiple_files=True)  
+            if fotos_upload:  
+                for f in fotos_upload[:3]:  
+                    fotos_manobra_pil.append(Image.open(f))  
+                      
+        with tab_camera:  
+            foto_cam = st.camera_input("Capturar foto do testemunho/caixa")  
+            if foto_cam and len(fotos_manobra_pil) < 3:  
+                fotos_manobra_pil.append(Image.open(foto_cam))  
           
-        with st.form("form_manobra"):  
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                data_manobra = st.date_input("Data", value=date.today())
-            with c2:
-                barrilete = st.text_input("Barrilete", value="HQ")
-            with c3:
-                operador_sonda = st.text_input("Operador Sonda", value=st.session_state.get("sondador", ""))
-
-            c4, c5, c6, c7, c8 = st.columns(5)  
-            with c4:  
-                de_m = st.number_input("Profundidade Inicial (m)", min_value=0.0, step=0.5, value=float(prox_de), format="%.2f")  
-            with c5:  
-                ate_m = st.number_input("Profundidade Final (m)", min_value=0.0, step=0.5, value=float(prox_ate), format="%.2f")  
-            with c6:  
-                recup_m = st.number_input("Recuperação (m)", min_value=0.0, step=0.1, value=round(max(0.0, ate_m - de_m), 2), format="%.2f")  
-            with c7:  
-                num_caixa = st.text_input("Caixa", value=manobras_furo[-1][8] if manobras_furo else "01")  
-            with c8:  
-                avanco_calc = round(ate_m - de_m, 2)
-                avanco_m = st.number_input("Avanço (m)", min_value=0.0, value=float(avanco_calc if avanco_calc > 0 else 0.0), format="%.2f")
-
-            taxa_recup = min(100.0, round((recup_m / avanco_m * 100), 1)) if avanco_m > 0 else 0.0  
-            st.caption(f"⚡ **Recuperação % Calculada:** {taxa_recup:.1f}%")  
-              
-            c9, c10, c11 = st.columns(3)  
-            with c9:  
-                horario_inicio = st.time_input("Horário Início", value=datetime.strptime("08:00", "%H:%M").time())  
-            with c10:  
-                horario_fim = st.time_input("Horário Fim", value=datetime.strptime("09:30", "%H:%M").time())  
-            with c11:  
-                tempo_manobra = st.text_input("Tempo de Manobra", value="01h 30m")  
-
-            c12, c13 = st.columns(2)
-            with c12:
-                desc_litologica = st.text_input("Litologia", placeholder="Ex: Solo residual, rocha alterada...")  
-            with c13:
-                observacoes = st.text_input("Observações", placeholder="Ex: Perda de água, troca de coroa...")  
-
-            st.markdown("---")  
-            st.subheader("Registro Fotográfico (Até 3 Fotos)")  
-                          
-            tab_galeria, tab_camera = st.tabs(["📁 Selecionar da Galeria", "📸 Câmera ao Vivo"])  
-            fotos_manobra_pil = []  
-                          
-            with tab_galeria:  
-                fotos_upload = st.file_uploader("Upload de imagens de campo", type=["jpg", "png", "jpeg"], accept_multiple_files=True)  
-                if fotos_upload:  
-                    for f in fotos_upload[:3]:  
-                        fotos_manobra_pil.append(Image.open(f))  
-                          
-            with tab_camera:  
-                foto_cam = st.camera_input("Capturar foto do testemunho/caixa")  
-                if foto_cam and len(fotos_manobra_pil) < 3:  
-                    fotos_manobra_pil.append(Image.open(foto_cam))  
-              
-            btn_salvar_manobra = st.form_submit_button("Adicionar Manobra", use_container_width=True)  
-              
-            if btn_salvar_manobra:  
-                if ate_m > de_m:  
-                    salvar_manobra(
-                        furo=furo_atual, 
-                        data_m=data_manobra, 
-                        de=de_m, 
-                        ate=ate_m, 
-                        avanco=avanco_m, 
-                        recup=recup_m, 
-                        taxa=taxa_recup, 
-                        caixa=num_caixa, 
-                        barrilete=barrilete, 
-                        h_inicio=horario_inicio.strftime("%H:%M"), 
-                        h_fim=horario_fim.strftime("%H:%M"), 
-                        tempo_man=tempo_manobra, 
-                        litologia=desc_litologica, 
-                        observacoes=observacoes, 
-                        operador=operador_sonda, 
-                        fotos_pil=fotos_manobra_pil
-                    )  
-                    st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m salva com sucesso!")  
-                    st.rerun()  
-                else:  
-                    st.error("A Profundidade Final precisa ser maior que a Profundidade Inicial.")  
+        if st.button("Adicionar Manobra Automática", use_container_width=True):  
+            if ate_m > de_m:  
+                salvar_manobra(
+                    furo=furo_atual, 
+                    data_m=data_manobra, 
+                    de=de_m, 
+                    ate=ate_m, 
+                    avanco=avanco_calc, 
+                    recup=recup_m, 
+                    taxa=taxa_recup, 
+                    caixa=num_caixa, 
+                    barrilete=barrilete, 
+                    h_inicio=horario_inicio.strftime("%H:%M"), 
+                    h_fim=horario_fim.strftime("%H:%M"), 
+                    tempo_man=tempo_manobra_auto, 
+                    litologia=desc_litologica, 
+                    observacoes=observacoes, 
+                    operador=operador_sonda, 
+                    h_trab=horas_trabalhadas,
+                    h_parado=horas_paradas,
+                    fotos_pil=fotos_manobra_pil
+                )  
+                st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m salva com sucesso! Durou: {tempo_manobra_auto}")  
+                st.rerun()  
+            else:  
+                st.error("A Profundidade Final precisa ser maior que a Profundidade Inicial.")  
           
         st.divider()  
         st.subheader(f"Histórico de Manobras e Testemunhos: {furo_atual}")  
@@ -720,10 +735,11 @@ else:
                 lito = row[13]
                 obs = row[14]
                 operador = row[15]
+                h_tr = row[19] or 0.0
 
                 dados_tabela.append([
                     m_id, furo_atual, dt_m, de, ate, avanc, rec, f"{rec_pct:.1f}%", 
-                    caixa, barrilete, h_ini, h_fim, t_man, lito, obs, operador
+                    caixa, barrilete, h_ini, h_fim, t_man, f"{h_tr:.2f} h", lito, obs, operador
                 ])  
               
             df_manobras = pd.DataFrame(  
@@ -731,7 +747,7 @@ else:
                 columns=[
                     "ID", "Furo", "Data", "Profundidade Inicial", "Profundidade Final", 
                     "Avanço", "Recuperação", "Recuperação %", "Caixa", "Barrilete", 
-                    "Horário Início", "Horário Fim", "Tempo de Manobra", "Litologia", 
+                    "Horário Início", "Horário Fim", "Tempo", "Horas Trab.", "Litologia", 
                     "Observações", "Operador Sonda"
                 ]  
             )  
@@ -754,10 +770,72 @@ else:
 
     # ETAPA 4  
     elif opcao == "4. Fechamento de Turno & Dashboard":  
-        st.title("4. Fechamento de Turno & Indicadores")  
-        st.caption("Visão analítica de produtividade, recuperação acumulada e emissão do relatório em PDF.")  
+        st.title("4. Fechamento de Turno & Dashboard Diário")  
+        st.caption("Visão analítica de produtividade, horas trabalhadas e furos perfurados no dia.")  
           
-        furo_sel = st.text_input("Identificação do Furo para Análise/Relatório", value=st.session_state.get("furo_id", "SP-01"))  
+        conn = sqlite3.connect(DB_NAME, timeout=10)
+        df_todas_manobras = pd.read_sql_query("SELECT * FROM manobras_testemunho", conn)
+        df_boletins = pd.read_sql_query("SELECT * FROM boletins_campo", conn)
+        conn.close()
+
+        # DASHBOARD GERAL DE PRODUÇÃO E HORAS TRABALHADAS
+        st.markdown("### 📊 Dashboard Diário de Operação e Horas Trabalhadas")
+        
+        if not df_todas_manobras.empty:
+            df_todas_manobras["data_manobra"] = df_todas_manobras["data_manobra"].fillna(date.today().strftime("%Y-%m-%d"))
+            data_filtro = st.date_input("Filtrar Dashboard por Data:", value=date.today())
+            
+            df_dia = df_todas_manobras[df_todas_manobras["data_manobra"] == str(data_filtro)]
+            
+            # Métricas em Cards
+            total_furos_dia = df_dia["furo_id"].nunique() if not df_dia.empty else 0
+            metras_perfuradas_dia = df_dia["avanco_m"].sum() if not df_dia.empty else 0.0
+            horas_produtivas_dia = df_dia["horas_trab"].sum() if not df_dia.empty else 0.0
+            horas_paradas_dia = df_dia["horas_parado"].sum() if not df_dia.empty else 0.0
+            
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric("Furos Trabalhados no Dia", f"{total_furos_dia}")
+            d2.metric("Metros Perfurados no Dia", f"{metras_perfuradas_dia:.2f} m")
+            d3.metric("Horas Trabalhadas (Perfuração)", f"{horas_produtivas_dia:.2f} h")
+            d4.metric("Horas Paradas / Interrupções", f"{horas_paradas_dia:.2f} h")
+
+            st.divider()
+
+            dash_col1, dash_col2 = st.columns(2)
+
+            with dash_col1:
+                # Gráfico de Furos vs Metragem
+                df_furos_grouped = df_todas_manobras.groupby(["data_manobra", "furo_id"])["avanco_m"].sum().reset_index()
+                fig_furos = px.bar(
+                    df_furos_grouped, 
+                    x="data_manobra", 
+                    y="avanco_m", 
+                    color="furo_id",
+                    title="Avanço Perfurado (m) por Furo por Dia",
+                    labels={"data_manobra": "Data", "avanco_m": "Metros Perfurados (m)", "furo_id": "Furo"}
+                )
+                st.plotly_chart(fig_furos, use_container_width=True)
+
+            with dash_col2:
+                # Gráfico de Horas Trabalhadas vs Paradas
+                df_horas_grouped = df_todas_manobras.groupby("data_manobra")[["horas_trab", "horas_parado"]].sum().reset_index()
+                fig_horas = px.bar(
+                    df_horas_grouped,
+                    x="data_manobra",
+                    y=["horas_trab", "horas_parado"],
+                    title="Distribuição Diária de Horas (Trabalhadas x Paradas)",
+                    labels={"data_manobra": "Data", "value": "Horas (h)", "variable": "Categoria"},
+                    barmode="stack"
+                )
+                st.plotly_chart(fig_horas, use_container_width=True)
+        else:
+            st.info("Sem dados operacionais para compor os gráficos do dashboard.")
+
+        st.divider()
+
+        # FECHAMENTO POR FURO
+        st.subheader("📄 Emissão do Boletim Diário do Furo em PDF")
+        furo_sel = st.text_input("Identificação do Furo para Emissão do BDS", value=st.session_state.get("furo_id", "SP-01"))  
         manobras = buscar_manobras(furo_sel)  
           
         if manobras:  
@@ -765,34 +843,6 @@ else:
             tot_recup = sum([m[6] or 0.0 for m in manobras])  
             taxa_global = (tot_recup / tot_avanco * 100) if tot_avanco > 0 else 0.0  
               
-            m1, m2, m3, m4 = st.columns(4)  
-            m1.metric("Avanço Total Perfurado", f"{tot_avanco:.2f} m")  
-            m2.metric("Recuperação Total", f"{tot_recup:.2f} m")  
-            m3.metric("Taxa Média Recuperação", f"{taxa_global:.1f}%")  
-            m4.metric("Total de Manobras", len(manobras))  
-              
-            st.divider()  
-            col_chart1, col_chart2 = st.columns(2)  
-              
-            with col_chart1:  
-                df_chart = pd.DataFrame([{
-                    "Avanço (m)": m[5], 
-                    "Recuperação (m)": m[6], 
-                    "Manobra": f"#{m[0]}"
-                } for m in manobras])
-                fig_bar = px.bar(df_chart, x="Manobra", y=["Avanço (m)", "Recuperação (m)"], barmode="group", title="Avanço x Recuperação por Manobra")  
-                st.plotly_chart(fig_bar, use_container_width=True)  
-                  
-            with col_chart2:  
-                df_line = pd.DataFrame([{
-                    "Profundidade Final (m)": m[4], 
-                    "Recuperação %": m[7]
-                } for m in manobras])
-                fig_line = px.line(df_line, x="Profundidade Final (m)", y="Recuperação %", title="Perfil de Recuperação % em Profundidade", markers=True)  
-                st.plotly_chart(fig_line, use_container_width=True)  
-              
-            st.divider()  
-            st.subheader("📄 Emissão do Boletim Diário em PDF")  
             obs_pdf = st.text_area("Observações Adicionais para o Relatório Final", value="Trabalho realizado dentro das normas de segurança.")  
               
             if st.button("Gerar Boletim em PDF", use_container_width=True):  
