@@ -1,1162 +1,880 @@
-import io
-import sqlite3
-from datetime import datetime, date, time
-from pathlib import Path
+import streamlit as st 
+import sqlite3 
+from datetime import datetime, date, time, timedelta
+import pandas as pd 
+from PIL import Image 
+import io 
+import json 
+import streamlit.components.v1 as components 
+import plotly.express as px 
+import plotly.graph_objects as go  
 
-import pandas as pd
-import streamlit as st
-from PIL import Image
-import plotly.express as px
+# --- IMPORTAÇÕES PARA GERAÇÃO NATIVA DE PDF (REPORTLAB) --- 
+from reportlab.lib.pagesizes import letter 
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, KeepTogether 
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle 
+from reportlab.lib import colors  
 
-# PDF
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    Image as RLImage, PageBreak
-)
+# --- CONFIGURAÇÃO DA PÁGINA --- 
+st.set_page_config(  
+    page_title="Boa Fortuna - Sistema de Sondagem",  
+    page_icon="⛏️",  
+    layout="wide",  
+    initial_sidebar_state="expanded" 
+)  
 
-# ============================================================
-# CONFIGURAÇÃO
-# ============================================================
+USUARIO_CORRETO = "admin" 
+SENHA_CORRETA = "1234" 
+DB_NAME = "boafortuna_dados.db"  
 
-st.set_page_config(
-    page_title="Boa Fortuna | Sistema Digital de Sondagem",
-    page_icon="⛏️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# --- BANCO DE DADOS LOCAL (COM MIGRAÇÃO AUTOMÁTICA) --- 
+def init_db():  
+    conn = sqlite3.connect(DB_NAME, timeout=10)  
+    c = conn.cursor()  
+    c.execute('''  
+        CREATE TABLE IF NOT EXISTS boletins_campo (  
+            id INTEGER PRIMARY KEY AUTOINCREMENT,  
+            data_registro TEXT,  
+            empresa TEXT,  
+            obra_cliente TEXT,  
+            cidade_uf TEXT,  
+            coordenador TEXT,  
+            supervisor TEXT,  
+            sondador TEXT,  
+            auxiliares TEXT,  
+            furo_id TEXT UNIQUE,  
+            tipo_sondagem TEXT,  
+            profundidade_m REAL,  
+            observacao TEXT  
+        )  
+    ''')  
+          
+    c.execute("PRAGMA table_info(boletins_campo)")  
+    colunas_existentes_b = [coluna[1] for coluna in c.fetchall()]  
+          
+    if "latitude" not in colunas_existentes_b:  
+        c.execute("ALTER TABLE boletins_campo ADD COLUMN latitude REAL")  
+    if "longitude" not in colunas_existentes_b:  
+        c.execute("ALTER TABLE boletins_campo ADD COLUMN longitude REAL")  
+    if "precisao_gps_m" not in colunas_existentes_b:  
+        c.execute("ALTER TABLE boletins_campo ADD COLUMN precisao_gps_m REAL")  
 
-DB_NAME = "boafortuna_dados.db"
-APP_NAME = "BOA FORTUNA"
-USUARIO_CORRETO = "admin"
-SENHA_CORRETA = "1234"
+    c.execute('''  
+        CREATE TABLE IF NOT EXISTS manobras_testemunho (  
+            id INTEGER PRIMARY KEY AUTOINCREMENT,  
+            furo_id TEXT NOT NULL,  
+            de_m REAL,  
+            ate_m REAL,  
+            recup_m REAL,  
+            taxa_recup_pct REAL,  
+            num_caixa TEXT,  
+            horas_trab REAL,  
+            horas_parado REAL,  
+            horario TEXT,  
+            motivo_parada TEXT,  
+            descricao_litologica TEXT,  
+            data_registro TEXT,  
+            foto1 BLOB,  
+            foto2 BLOB,  
+            foto3 BLOB  
+        )  
+    ''')  
 
-# ============================================================
-# ESTILO
-# ============================================================
+    c.execute("PRAGMA table_info(manobras_testemunho)")
+    colunas_existentes_m = [coluna[1] for coluna in c.fetchall()]
 
-st.markdown("""
-<style>
-.stApp { background: #F8FAFC; }
-[data-testid="stSidebar"] { background: #0F172A; }
-[data-testid="stSidebar"] * { color: #F8FAFC !important; }
-h1,h2,h3 { color:#1E3A8A !important; }
-div[data-testid="stMetric"] {
-    background:white;
-    border:1px solid #E2E8F0;
-    border-radius:12px;
-    padding:12px;
-}
-div.stButton > button {
-    border-radius:8px;
-    font-weight:600;
-}
-.small-note { color:#64748B; font-size:0.85rem; }
-</style>
-""", unsafe_allow_html=True)
-
-# ============================================================
-# BANCO
-# ============================================================
-
-def get_conn():
-    return sqlite3.connect(DB_NAME, timeout=20)
-
-def init_db():
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS furos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        furo_id TEXT UNIQUE NOT NULL,
-        projeto TEXT,
-        empresa TEXT,
-        obra_cliente TEXT,
-        cidade_uf TEXT,
-        sonda TEXT,
-        tipo_sondagem TEXT DEFAULT 'Rotativa',
-        operador TEXT,
-        auxiliares TEXT,
-        coordenador TEXT,
-        supervisor TEXT,
-        latitude REAL,
-        longitude REAL,
-        precisao_gps_m REAL,
-        datum TEXT DEFAULT 'SIRGAS 2000',
-        azimute REAL DEFAULT 0,
-        inclinacao REAL DEFAULT -90,
-        diametro TEXT,
-        data_inicio TEXT,
-        data_fim TEXT,
-        profundidade_final REAL DEFAULT 0,
-        observacao TEXT,
-        atualizado_em TEXT
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS manobras (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        furo_id TEXT NOT NULL,
-        data_manobra TEXT,
-        de_m REAL,
-        ate_m REAL,
-        avanco_m REAL,
-        recup_m REAL,
-        taxa_recup_pct REAL,
-        caixa TEXT,
-        barrilete TEXT,
-        horario_inicio TEXT,
-        horario_fim TEXT,
-        tempo_manobra_min REAL,
-        horas_trab REAL,
-        horas_parado REAL,
-        motivo_parada TEXT,
-        litologia TEXT,
-        alteracao TEXT,
-        mineralizacao TEXT,
-        estruturas TEXT,
-        observacoes TEXT,
-        operador TEXT,
-        foto1 BLOB,
-        foto2 BLOB,
-        foto3 BLOB,
-        criado_em TEXT
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS geologia (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        furo_id TEXT NOT NULL,
-        de_m REAL,
-        ate_m REAL,
-        litologia TEXT,
-        alteracao TEXT,
-        mineralizacao TEXT,
-        estruturas TEXT,
-        observacoes TEXT,
-        criado_em TEXT
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS configuracoes (
-        chave TEXT PRIMARY KEY,
-        valor TEXT
-    )
-    """)
-
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# ============================================================
-# FUNÇÕES AUXILIARES
-# ============================================================
-
-def agora():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-def otimizar_imagem(upload):
-    if upload is None:
-        return None
-    img = Image.open(upload).convert("RGB")
-    img.thumbnail((1400, 1400), Image.Resampling.LANCZOS)
-    buf = io.BytesIO()
-    img.save(buf, "JPEG", quality=82, optimize=True)
-    return buf.getvalue()
-
-def blob_to_image(blob):
-    if not blob:
-        return None
-    try:
-        return Image.open(io.BytesIO(blob))
-    except Exception:
-        return None
-
-def calcular_tempo_min(inicio, fim):
-    """Calcula duração mesmo quando a manobra passa da meia-noite."""
-    if inicio is None or fim is None:
-        return 0
-    a = datetime.combine(date.today(), inicio)
-    b = datetime.combine(date.today(), fim)
-    if b < a:
-        b += pd.Timedelta(days=1)
-    return max(0, int((b - a).total_seconds() / 60))
-
-def calcular_horas(inicio, fim):
-    return calcular_tempo_min(inicio, fim) / 60
-
-def get_furos():
-    conn = get_conn()
-    df = pd.read_sql_query(
-        "SELECT * FROM furos ORDER BY furo_id", conn
-    )
-    conn.close()
-    return df
-
-def get_furo(furo_id):
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT * FROM furos WHERE furo_id=?", (furo_id,)
-    ).fetchone()
-    cols = [d[0] for d in conn.execute("SELECT * FROM furos LIMIT 0").description]
-    conn.close()
-    return dict(zip(cols, row)) if row else None
-
-def get_manobras(furo_id):
-    conn = get_conn()
-    df = pd.read_sql_query(
-        "SELECT * FROM manobras WHERE furo_id=? ORDER BY de_m, id",
-        conn, params=(furo_id,)
-    )
-    conn.close()
-    return df
-
-def get_geologia(furo_id):
-    conn = get_conn()
-    df = pd.read_sql_query(
-        "SELECT * FROM geologia WHERE furo_id=? ORDER BY de_m, id",
-        conn, params=(furo_id,)
-    )
-    conn.close()
-    return df
-
-def salvar_furo(d):
-    conn = get_conn()
-    conn.execute("""
-    INSERT INTO furos (
-        furo_id, projeto, empresa, obra_cliente, cidade_uf, sonda,
-        tipo_sondagem, operador, auxiliares, coordenador, supervisor,
-        latitude, longitude, precisao_gps_m, datum, azimute, inclinacao,
-        diametro, data_inicio, data_fim, profundidade_final, observacao,
-        atualizado_em
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(furo_id) DO UPDATE SET
-        projeto=excluded.projeto,
-        empresa=excluded.empresa,
-        obra_cliente=excluded.obra_cliente,
-        cidade_uf=excluded.cidade_uf,
-        sonda=excluded.sonda,
-        tipo_sondagem=excluded.tipo_sondagem,
-        operador=excluded.operador,
-        auxiliares=excluded.auxiliares,
-        coordenador=excluded.coordenador,
-        supervisor=excluded.supervisor,
-        latitude=excluded.latitude,
-        longitude=excluded.longitude,
-        precisao_gps_m=excluded.precisao_gps_m,
-        datum=excluded.datum,
-        azimute=excluded.azimute,
-        inclinacao=excluded.inclinacao,
-        diametro=excluded.diametro,
-        data_inicio=excluded.data_inicio,
-        data_fim=excluded.data_fim,
-        profundidade_final=excluded.profundidade_final,
-        observacao=excluded.observacao,
-        atualizado_em=excluded.atualizado_em
-    """, (
-        d["furo_id"], d["projeto"], d["empresa"], d["obra_cliente"],
-        d["cidade_uf"], d["sonda"], d["tipo_sondagem"], d["operador"],
-        d["auxiliares"], d["coordenador"], d["supervisor"],
-        d["latitude"], d["longitude"], d["precisao_gps_m"], d["datum"],
-        d["azimute"], d["inclinacao"], d["diametro"], d["data_inicio"],
-        d["data_fim"], d["profundidade_final"], d["observacao"], agora()
-    ))
-    conn.commit()
-    conn.close()
-
-def atualizar_profundidade(furo_id):
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT COALESCE(MAX(ate_m),0) FROM manobras WHERE furo_id=?",
-        (furo_id,)
-    ).fetchone()
-    profundidade = float(row[0] or 0)
-    conn.execute(
-        "UPDATE furos SET profundidade_final=?, atualizado_em=? WHERE furo_id=?",
-        (profundidade, agora(), furo_id)
-    )
-    conn.commit()
-    conn.close()
-    return profundidade
-
-def salvar_manobra(d):
-    conn = get_conn()
-    conn.execute("""
-    INSERT INTO manobras (
-        furo_id,data_manobra,de_m,ate_m,avanco_m,recup_m,taxa_recup_pct,
-        caixa,barrilete,horario_inicio,horario_fim,tempo_manobra_min,
-        horas_trab,horas_parado,motivo_parada,litologia,alteracao,
-        mineralizacao,estruturas,observacoes,operador,
-        foto1,foto2,foto3,criado_em
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    """, (
-        d["furo_id"], d["data_manobra"], d["de_m"], d["ate_m"],
-        d["avanco_m"], d["recup_m"], d["taxa_recup_pct"], d["caixa"],
-        d["barrilete"], d["horario_inicio"], d["horario_fim"],
-        d["tempo_manobra_min"], d["horas_trab"], d["horas_parado"],
-        d["motivo_parada"], d["litologia"], d["alteracao"],
-        d["mineralizacao"], d["estruturas"], d["observacoes"],
-        d["operador"], d["foto1"], d["foto2"], d["foto3"], agora()
-    ))
-    conn.commit()
-    conn.close()
-    atualizar_profundidade(d["furo_id"])
-
-def excluir_manobra(id_manobra):
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT furo_id FROM manobras WHERE id=?", (id_manobra,)
-    ).fetchone()
-    conn.execute("DELETE FROM manobras WHERE id=?", (id_manobra,))
-    conn.commit()
-    conn.close()
-    if row:
-        atualizar_profundidade(row[0])
-
-def salvar_geologia(d):
-    conn = get_conn()
-    conn.execute("""
-    INSERT INTO geologia (
-        furo_id,de_m,ate_m,litologia,alteracao,mineralizacao,
-        estruturas,observacoes,criado_em
-    ) VALUES (?,?,?,?,?,?,?,?,?)
-    """, (
-        d["furo_id"], d["de_m"], d["ate_m"], d["litologia"],
-        d["alteracao"], d["mineralizacao"], d["estruturas"],
-        d["observacoes"], agora()
-    ))
-    conn.commit()
-    conn.close()
-
-def excluir_geologia(id_geo):
-    conn = get_conn()
-    conn.execute("DELETE FROM geologia WHERE id=?", (id_geo,))
-    conn.commit()
-    conn.close()
-
-def proximo_intervalo(furo_id):
-    df = get_manobras(furo_id)
-    if df.empty:
-        return 0.0
-    return float(df["ate_m"].max())
-
-def estatisticas_furo(furo_id):
-    df = get_manobras(furo_id)
-    if df.empty:
-        return {
-            "metros": 0, "recuperados": 0, "rec_pct": 0,
-            "h_trab": 0, "h_parado": 0, "prod_h": 0,
-            "manobras": 0
-        }
-    metros = float(df["avanco_m"].fillna(0).sum())
-    recuperados = float(df["recup_m"].fillna(0).sum())
-    h_trab = float(df["horas_trab"].fillna(0).sum())
-    h_parado = float(df["horas_parado"].fillna(0).sum())
-    return {
-        "metros": metros,
-        "recuperados": recuperados,
-        "rec_pct": (recuperados / metros * 100) if metros else 0,
-        "h_trab": h_trab,
-        "h_parado": h_parado,
-        "prod_h": metros / h_trab if h_trab else 0,
-        "manobras": len(df)
+    novas_colunas = {
+        "data_manobra": "TEXT",
+        "avanco_m": "REAL",
+        "barrilete": "TEXT",
+        "horario_inicio": "TEXT",
+        "horario_fim": "TEXT",
+        "tempo_manobra": "TEXT",
+        "observacoes": "TEXT",
+        "operador_sonda": "TEXT"
     }
 
-# ============================================================
-# GPS OPCIONAL
-# ============================================================
+    for col, tipo in novas_colunas.items():
+        if col not in colunas_existentes_m:
+            c.execute(f"ALTER TABLE manobras_testemunho ADD COLUMN {col} {tipo}")
 
-try:
-    from streamlit_geolocation import streamlit_geolocation
-    GPS_DISPONIVEL = True
-except Exception:
-    GPS_DISPONIVEL = False
+    conn.commit()  
+    conn.close()  
 
-def capturar_gps():
-    if not GPS_DISPONIVEL:
-        st.warning(
-            "GPS automático não instalado. No Colab, execute: "
-            "`!pip install streamlit-geolocation` e reinicie o app."
-        )
-        return
-    loc = streamlit_geolocation()
-    if loc and loc.get("latitude") is not None:
-        st.session_state.latitude = float(loc["latitude"])
-        st.session_state.longitude = float(loc["longitude"])
-        st.session_state.precisao_gps = float(loc.get("accuracy") or 0)
-        st.success(
-            f"GPS capturado: {st.session_state.latitude:.6f}, "
-            f"{st.session_state.longitude:.6f}"
-        )
+init_db()  
 
-# ============================================================
-# PDF
-# ============================================================
-
-def gerar_pdf(furo_id):
-    furo = get_furo(furo_id)
-    man = get_manobras(furo_id)
-    geo = get_geologia(furo_id)
-    stats = estatisticas_furo(furo_id)
-
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, pagesize=landscape(A4),
-        rightMargin=24, leftMargin=24, topMargin=24, bottomMargin=24
-    )
-    styles = getSampleStyleSheet()
-    title = ParagraphStyle(
-        "title", parent=styles["Title"], fontSize=17,
-        textColor=colors.HexColor("#1E3A8A"), alignment=1
-    )
-    heading = ParagraphStyle(
-        "heading", parent=styles["Heading2"], fontSize=11,
-        textColor=colors.HexColor("#1E3A8A"), spaceBefore=8
-    )
-    cell = ParagraphStyle("cell", parent=styles["Normal"], fontSize=7)
-    elements = []
-
-    elements.append(Paragraph(
-        f"{APP_NAME} — BOLETIM DIGITAL DE SONDAGEM — {furo_id}", title
-    ))
-    elements.append(Spacer(1, 8))
-
-    info = [
-        [
-            f"Projeto: {furo.get('projeto','-')}",
-            f"Empresa: {furo.get('empresa','-')}",
-            f"Obra/Cliente: {furo.get('obra_cliente','-')}",
-            f"Cidade/UF: {furo.get('cidade_uf','-')}",
-        ],
-        [
-            f"Sonda: {furo.get('sonda','-')}",
-            f"Operador: {furo.get('operador','-')}",
-            f"Azimute: {furo.get('azimute',0):.1f}°",
-            f"Inclinação: {furo.get('inclinacao',0):.1f}°",
-        ],
-        [
-            f"Latitude: {furo.get('latitude','-')}",
-            f"Longitude: {furo.get('longitude','-')}",
-            f"Datum: {furo.get('datum','-')}",
-            f"Profundidade: {stats['metros']:.2f} m",
-        ],
-    ]
-    t = Table(info, colWidths=[185]*4)
-    t.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#F8FAFC")),
-        ("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#CBD5E1")),
-        ("PADDING",(0,0),(-1,-1),6),
-    ]))
-    elements.append(t)
-
-    elements.append(Paragraph("Indicadores", heading))
-    ind = [[
-        "Metros perfurados", "Metros recuperados", "Recuperação",
-        "Horas trabalhadas", "Horas paradas", "Produtividade"
-    ], [
-        f"{stats['metros']:.2f} m", f"{stats['recuperados']:.2f} m",
-        f"{stats['rec_pct']:.1f}%", f"{stats['h_trab']:.2f} h",
-        f"{stats['h_parado']:.2f} h", f"{stats['prod_h']:.2f} m/h"
-    ]]
-    ti = Table(ind, colWidths=[115]*6)
-    ti.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#1E3A8A")),
-        ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("ALIGN",(0,0),(-1,-1),"CENTER"),
-        ("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#CBD5E1")),
-        ("PADDING",(0,0),(-1,-1),6),
-    ]))
-    elements.append(ti)
-
-    elements.append(Paragraph("Manobras", heading))
-    rows = [[
-        Paragraph(x, cell) for x in
-        ["Data","De","Até","Avanço","Recup.","Rec. %","Caixa",
-         "Barrilete","Início","Fim","H.Trab.","H.Parado","Litologia"]
-    ]]
-    for _, r in man.iterrows():
-        rows.append([
-            str(r["data_manobra"] or "-"),
-            f"{r['de_m']:.2f}",
-            f"{r['ate_m']:.2f}",
-            f"{r['avanco_m']:.2f}",
-            f"{r['recup_m']:.2f}",
-            f"{r['taxa_recup_pct']:.1f}%",
-            str(r["caixa"] or "-"),
-            str(r["barrilete"] or "-"),
-            str(r["horario_inicio"] or "-"),
-            str(r["horario_fim"] or "-"),
-            f"{r['horas_trab']:.2f}",
-            f"{r['horas_parado']:.2f}",
-            str(r["litologia"] or "-"),
-        ])
-    if len(rows) == 1:
-        rows.append(["Sem registros"] + [""] * 12)
-    tm = Table(rows, repeatRows=1, colWidths=[
-        55,38,38,45,45,45,45,55,45,45,45,45,100
-    ])
-    tm.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#1E3A8A")),
-        ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("GRID",(0,0),(-1,-1),0.4,colors.HexColor("#CBD5E1")),
-        ("FONTSIZE",(0,0),(-1,-1),7),
-        ("ALIGN",(1,1),(-2,-1),"CENTER"),
-        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
-    ]))
-    elements.append(tm)
-
-    if not geo.empty:
-        elements.append(Paragraph("Geologia", heading))
-        gr = [["De","Até","Litologia","Alteração","Mineralização","Estruturas","Observações"]]
-        for _, r in geo.iterrows():
-            gr.append([
-                f"{r['de_m']:.2f}", f"{r['ate_m']:.2f}",
-                str(r["litologia"] or "-"), str(r["alteracao"] or "-"),
-                str(r["mineralizacao"] or "-"), str(r["estruturas"] or "-"),
-                str(r["observacoes"] or "-")
-            ])
-        tg = Table(gr, repeatRows=1, colWidths=[40,40,100,100,100,100,120])
-        tg.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#334155")),
-            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("GRID",(0,0),(-1,-1),0.4,colors.HexColor("#CBD5E1")),
-            ("FONTSIZE",(0,0),(-1,-1),7),
-        ]))
-        elements.append(tg)
-
-    # Fotos
-    fotos = []
-    for _, r in man.iterrows():
-        for col in ["foto1","foto2","foto3"]:
-            img = blob_to_image(r[col])
-            if img:
-                b = io.BytesIO()
-                img.thumbnail((500, 350))
-                img.save(b, "JPEG")
-                b.seek(0)
-                fotos.append(RLImage(b, width=180, height=125))
-    if fotos:
-        elements.append(PageBreak())
-        elements.append(Paragraph("Anexo Fotográfico", heading))
-        grid = []
-        for i in range(0, len(fotos), 3):
-            linha = fotos[i:i+3]
-            while len(linha) < 3:
-                linha.append("")
-            grid.append(linha)
-        tf = Table(grid, colWidths=[250]*3)
-        tf.setStyle(TableStyle([
-            ("ALIGN",(0,0),(-1,-1),"CENTER"),
-            ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
-            ("BOTTOMPADDING",(0,0),(-1,-1),8),
-        ]))
-        elements.append(tf)
-
-    doc.build(elements)
-    return buffer.getvalue()
-
-# ============================================================
-# LOGIN
-# ============================================================
-
-if "logado" not in st.session_state:
-    st.session_state.logado = False
-
-if not st.session_state.logado:
-    st.markdown("""
-    <style>
-    .stApp {
-        background:linear-gradient(135deg,#1E3A8A 0%,#0F172A 100%);
+# --- COMPONENTE DE GEOLOCALIZAÇÃO GPS AUTOMÁTICA VIA BROWSER --- 
+def obter_geolocalizacao_gps_auto():  
+    componente_js = """  
+    <div style="font-family: Arial, sans-serif; text-align: center; padding: 5px;">  
+        <p id="status" style="font-size: 13px; color: #0284c7; margin: 0; font-weight: 600;">📡 Buscando sinal GPS automaticamente...</p>  
+    </div>  
+      
+    <script>  
+    function capturarGPS() {
+        var status = document.getElementById('status');  
+        if (!navigator.geolocation) {  
+            status.innerText = '❌ Geolocalização não é suportada pelo navegador.';  
+            return;  
+        }  
+        navigator.geolocation.getCurrentPosition(  
+            function(pos) {  
+                var coords = {  
+                    lat: pos.coords.latitude.toFixed(6),  
+                    lng: pos.coords.longitude.toFixed(6),  
+                    precisao: pos.coords.accuracy.toFixed(1)  
+                };  
+                status.innerText = '✅ GPS Capturado: ' + coords.lat + ', ' + coords.lng + ' (±' + coords.precisao + 'm)';  
+                window.parent.postMessage({  
+                    type: 'streamlit:setComponentValue',  
+                    value: JSON.stringify(coords)  
+                }, '*');  
+            },  
+            function(err) { 
+                status.innerText = '⚠️ Erro ao obter GPS: ' + err.message; 
+            },  
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }  
+        );  
     }
-    </style>
-    """, unsafe_allow_html=True)
+    
+    // Dispara a captura assim que carrega
+    window.onload = capturarGPS;
+    </script>  
+    """  
+    return components.html(componente_js, height=45)  
 
-    _, col, _ = st.columns([1,1.2,1])
-    with col:
-        st.write("")
-        st.markdown(
-            "<h1 style='text-align:center;color:white'>BOA FORTUNA</h1>",
-            unsafe_allow_html=True
-        )
-        st.markdown(
-            "<p style='text-align:center;color:#93C5FD'>"
-            "SISTEMA DIGITAL DE SONDAGEM</p>",
-            unsafe_allow_html=True
-        )
-        with st.form("login"):
-            usuario = st.text_input("Usuário")
-            senha = st.text_input("Senha", type="password")
-            entrar = st.form_submit_button("Acessar", use_container_width=True)
-            if entrar:
-                if usuario == USUARIO_CORRETO and senha == SENHA_CORRETA:
-                    st.session_state.logado = True
-                    st.rerun()
-                else:
-                    st.error("Usuário ou senha inválidos.")
-    st.stop()
+# --- AUXILIARES DE IMAGEM --- 
+def otimizar_e_converter_bytes(img_pil, max_size=(1024, 1024), quality=80):  
+    if img_pil is None:  
+        return None  
+    img = img_pil.copy()  
+    img.thumbnail(max_size, Image.Resampling.LANCZOS)  
+    if img.mode in ("RGBA", "P"):  
+        img = img.convert("RGB")  
+    buffer = io.BytesIO()  
+    img.save(buffer, format="JPEG", quality=quality, optimize=True)  
+    return buffer.getvalue()  
 
-# ============================================================
-# SIDEBAR
-# ============================================================
+def bytes_para_pil(dados_blob):  
+    if dados_blob is None:  
+        return None  
+    try:  
+        return Image.open(io.BytesIO(dados_blob))  
+    except Exception:  
+        return None  
 
-st.sidebar.title("⛏️ BOA FORTUNA")
-st.sidebar.caption("Sistema Digital de Sondagem")
-st.sidebar.divider()
+# --- MANIPULAÇÃO DO BANCO DE DADOS --- 
+def sincronizar_boletim_automatico(furo_id, prof_atingida):  
+    conn = sqlite3.connect(DB_NAME, timeout=10)  
+    c = conn.cursor()  
+    data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")  
+          
+    empresa = st.session_state.get("empresa", "Boa Fortuna Perfurações")  
+    obra = st.session_state.get("obra", "Não informada")  
+    cidade = st.session_state.get("cidade", "-")  
+    coordenador = st.session_state.get("coordenador", "-")  
+    supervisor = st.session_state.get("supervisor", "-")  
+    sondador = st.session_state.get("sondador", "-")  
+    auxiliares = st.session_state.get("auxiliares", "-")  
+    tipo_sondagem = st.session_state.get("tipo_sondagem", "Rotativa")  
+    lat = st.session_state.get("latitude", None)  
+    lng = st.session_state.get("longitude", None)  
+    precisao = st.session_state.get("precisao_gps", None)  
+          
+    c.execute('SELECT id, profundidade_m FROM boletins_campo WHERE furo_id = ?', (furo_id,))  
+    existe = c.fetchone()  
+          
+    if existe:  
+        c.execute('''  
+            UPDATE boletins_campo  
+            SET profundidade_m = max(profundidade_m, ?),  
+                empresa = CASE WHEN ? != 'Boa Fortuna Perfurações' THEN ? ELSE empresa END,  
+                obra_cliente = CASE WHEN ? != 'Não informada' THEN ? ELSE obra_cliente END,  
+                cidade_uf = CASE WHEN ? != '-' THEN ? ELSE cidade_uf END,  
+                sondador = CASE WHEN ? != '-' THEN ? ELSE sondador END,  
+                coordenador = CASE WHEN ? != '-' THEN ? ELSE coordenador END,  
+                supervisor = CASE WHEN ? != '-' THEN ? ELSE supervisor END,  
+                auxiliares = CASE WHEN ? != '-' THEN ? ELSE auxiliares END,  
+                latitude = COALESCE(?, latitude),  
+                longitude = COALESCE(?, longitude),  
+                precisao_gps_m = COALESCE(?, precisao_gps_m),  
+                data_registro = ?  
+            WHERE furo_id = ?  
+        ''', (  
+            prof_atingida, empresa, empresa, obra, obra, cidade, cidade,  
+            sondador, sondador, coordenador, coordenador, supervisor, supervisor,  
+            auxiliares, auxiliares, lat, lng, precisao, data_atual, furo_id  
+        ))  
+    else:  
+        c.execute('''  
+            INSERT INTO boletins_campo  
+            (data_registro, empresa, obra_cliente, cidade_uf, coordenador, supervisor, sondador, auxiliares, furo_id, tipo_sondagem, profundidade_m, latitude, longitude, precisao_gps_m, observacao)  
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)  
+        ''', (data_atual, empresa, obra, cidade, coordenador, supervisor, sondador, auxiliares, furo_id, tipo_sondagem, prof_atingida, lat, lng, precisao, "Sincronizado via manobras"))  
+          
+    conn.commit()  
+    conn.close()  
 
-furos_df = get_furos()
-if not furos_df.empty:
-    lista_furos = furos_df["furo_id"].tolist()
-else:
-    lista_furos = []
+def salvar_manobra(furo, data_m, de, ate, avanco, recup, taxa, caixa, barrilete, h_inicio, h_fim, tempo_man, litologia, observacoes, operador, h_trab=1.0, h_parado=0.0, motivo="Nenhum", fotos_pil=None):  
+    conn = sqlite3.connect(DB_NAME, timeout=10)  
+    c = conn.cursor()  
+    data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")  
+          
+    f1 = otimizar_e_converter_bytes(fotos_pil[0]) if fotos_pil and len(fotos_pil) > 0 else None  
+    f2 = otimizar_e_converter_bytes(fotos_pil[1]) if fotos_pil and len(fotos_pil) > 1 else None  
+    f3 = otimizar_e_converter_bytes(fotos_pil[2]) if fotos_pil and len(fotos_pil) > 2 else None  
+      
+    c.execute('''  
+        INSERT INTO manobras_testemunho  
+        (furo_id, data_manobra, de_m, ate_m, avanco_m, recup_m, taxa_recup_pct, num_caixa, barrilete, horario_inicio, horario_fim, tempo_manobra, descricao_litologica, observacoes, operador_sonda, horas_trab, horas_parado, horario, motivo_parada, data_registro, foto1, foto2, foto3)  
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)  
+    ''', (furo, str(data_m), de, ate, avanco, recup, taxa, caixa, barrilete, h_inicio, h_fim, tempo_man, litologia, observacoes, operador, h_trab, h_parado, f"{h_inicio} - {h_fim}", motivo, data_atual, f1, f2, f3))  
+    conn.commit()  
+    conn.close()  
+    sincronizar_boletim_automatico(furo, ate)  
 
-if "furo_atual" not in st.session_state:
-    st.session_state.furo_atual = lista_furos[0] if lista_furos else "BF-001"
+def deletar_manobra(manobra_id):  
+    conn = sqlite3.connect(DB_NAME, timeout=10)  
+    c = conn.cursor()  
+    c.execute('DELETE FROM manobras_testemunho WHERE id = ?', (manobra_id,))  
+    conn.commit()  
+    conn.close()  
 
-if lista_furos:
-    escolhido = st.sidebar.selectbox(
-        "Furo ativo",
-        lista_furos,
-        index=lista_furos.index(st.session_state.furo_atual)
-        if st.session_state.furo_atual in lista_furos else 0
-    )
-    st.session_state.furo_atual = escolhido
-else:
-    st.sidebar.info("Nenhum furo cadastrado. Crie o primeiro.")
+def buscar_manobras(furo_id=None):  
+    conn = sqlite3.connect(DB_NAME, timeout=10)  
+    c = conn.cursor()  
+    if furo_id:  
+        c.execute('''
+            SELECT id, furo_id, data_manobra, de_m, ate_m, avanco_m, recup_m, taxa_recup_pct, 
+                   num_caixa, barrilete, horario_inicio, horario_fim, tempo_manobra, 
+                   descricao_litologica, observacoes, operador_sonda, foto1, foto2, foto3, horas_trab, horas_parado
+            FROM manobras_testemunho 
+            WHERE furo_id = ? ORDER BY id ASC
+        ''', (furo_id,))  
+    else:  
+        c.execute('''
+            SELECT id, furo_id, data_manobra, de_m, ate_m, avanco_m, recup_m, taxa_recup_pct, 
+                   num_caixa, barrilete, horario_inicio, horario_fim, tempo_manobra, 
+                   descricao_litologica, observacoes, operador_sonda, data_registro, horas_trab, horas_parado
+            FROM manobras_testemunho ORDER BY id DESC
+        ''')  
+    dados = c.fetchall()  
+    conn.close()  
+    return dados  
 
-menu = st.sidebar.radio(
-    "Módulo",
-    [
-        "🏠 Dashboard",
-        "📋 Dados do Furo",
-        "🔩 Manobras",
-        "🪨 Testemunho / Fotos",
-        "🧱 Geologia",
-        "📄 Relatório PDF",
-        "🗃️ Banco de Dados",
-    ]
-)
+def buscar_dados_furo(furo_id):  
+    try:  
+        conn = sqlite3.connect(DB_NAME, timeout=10)  
+        c = conn.cursor()  
+        c.execute('SELECT latitude, longitude, precisao_gps_m FROM boletins_campo WHERE furo_id = ?', (furo_id,))  
+        res = c.fetchone()  
+        conn.close()  
+        return res if res else (None, None, None)  
+    except Exception:  
+        return (None, None, None)  
 
-if st.sidebar.button("🚪 Sair", use_container_width=True):
-    st.session_state.logado = False
-    st.rerun()
+# --- GERADOR NATIVO DE PDF PROFISSIONAL (REPORTLAB) --- 
+def gerar_pdf_boletim(furo_id, obs_fechamento=""):  
+    buffer = io.BytesIO()  
+    doc = SimpleDocTemplate(  
+        buffer,  
+        pagesize=letter,  
+        rightMargin=36,  
+        leftMargin=36,  
+        topMargin=36,  
+        bottomMargin=36  
+    )  
+          
+    styles = getSampleStyleSheet()  
+          
+    title_style = ParagraphStyle(  
+        'DocTitle', parent=styles['Heading1'], fontSize=16, leading=18, textColor=colors.HexColor('#1E3A8A'), alignment=1, fontName='Helvetica-Bold'  
+    )  
+    subtitle_style = ParagraphStyle(  
+        'DocSubTitle', parent=styles['Normal'], fontSize=10, leading=12, textColor=colors.HexColor('#475569'), alignment=1, fontName='Helvetica-Bold'  
+    )  
+    section_heading = ParagraphStyle(  
+        'SectionHeading', parent=styles['Heading2'], fontSize=12, leading=14, textColor=colors.HexColor('#1E3A8A'), spaceBefore=10, spaceAfter=5, fontName='Helvetica-Bold'  
+    )  
+    cell_style = ParagraphStyle(  
+        'CellText', parent=styles['Normal'], fontSize=7, leading=9, textColor=colors.HexColor('#1E293B')  
+    )  
+    cell_header_style = ParagraphStyle(  
+        'CellHeader', parent=styles['Normal'], fontSize=7, leading=9, textColor=colors.white, fontName='Helvetica-Bold', alignment=1  
+    )  
 
-# ============================================================
-# DASHBOARD
-# ============================================================
+    elements = []  
+      
+    empresa = st.session_state.get("empresa", "BOA FORTUNA PERFURAÇÕES E SONDAGENS")  
+    elements.append(Paragraph(empresa.upper(), title_style))  
+    elements.append(Paragraph(f"BOLETIM DIÁRIO DE SONDAGEM (BDS) - FURO: {furo_id}", subtitle_style))  
+    elements.append(Spacer(1, 10))  
+      
+    obra = st.session_state.get("obra", "-")  
+    cidade = st.session_state.get("cidade", "-")  
+    sondador = st.session_state.get("sondador", "-")  
+    coordenador = st.session_state.get("coordenador", "-")  
+    data_campo = str(st.session_state.get("data_campo", date.today()))  
+          
+    lat_db, lng_db, prec_db = buscar_dados_furo(furo_id)  
+    lat = st.session_state.get("latitude", lat_db)  
+    lng = st.session_state.get("longitude", lng_db)  
+    coord_str = f"Lat: {lat:.6f} | Lng: {lng:.6f}" if lat and lng else "Não Informada"  
+      
+    info_data = [  
+        [Paragraph(f"<b>Cliente/Obra:</b> {obra}", cell_style), Paragraph(f"<b>Cidade/UF:</b> {cidade}", cell_style), Paragraph(f"<b>Data:</b> {data_campo}", cell_style)],  
+        [Paragraph(f"<b>Sondador Resp.:</b> {sondador}", cell_style), Paragraph(f"<b>Coordenador:</b> {coordenador}", cell_style), Paragraph(f"<b>Coordenadas GPS:</b> {coord_str}", cell_style)]  
+    ]  
+      
+    table_info = Table(info_data, colWidths=[180, 180, 180])  
+    table_info.setStyle(TableStyle([  
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),  
+        ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#CBD5E1')),  
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),  
+        ('TOPPADDING', (0,0), (-1,-1), 6),  
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),  
+    ]))  
+    elements.append(table_info)  
+    elements.append(Spacer(1, 12))  
+      
+    elements.append(Paragraph("Avanço de Perfuração e Recuperação de Testemunhos", section_heading))  
+    manobras = buscar_manobras(furo_id)  
+          
+    manobras_headers = [  
+        Paragraph("<b>Data</b>", cell_header_style),  
+        Paragraph("<b>De (m)</b>", cell_header_style),  
+        Paragraph("<b>Até (m)</b>", cell_header_style),  
+        Paragraph("<b>Avanço</b>", cell_header_style),  
+        Paragraph("<b>Recup.</b>", cell_header_style),  
+        Paragraph("<b>Rec. %</b>", cell_header_style),  
+        Paragraph("<b>Caixa</b>", cell_header_style),  
+        Paragraph("<b>Barrilete</b>", cell_header_style),  
+        Paragraph("<b>Litologia</b>", cell_header_style),  
+        Paragraph("<b>Operador</b>", cell_header_style)  
+    ]  
+          
+    manobras_rows = [manobras_headers]  
+    total_avanco = 0  
+    total_recup = 0  
+      
+    if manobras:  
+        for m in manobras:  
+            dt_m, de, ate, avanc, rec, rec_pct, caixa, barrilete, litologia, operador = m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[13], m[15]  
+            total_avanco += (avanc or 0)  
+            total_recup += (rec or 0)  
+                          
+            manobras_rows.append([  
+                Paragraph(str(dt_m or "-"), cell_style),  
+                Paragraph(f"{de:.2f}", cell_style),  
+                Paragraph(f"{ate:.2f}", cell_style),  
+                Paragraph(f"{avanc:.2f}", cell_style),  
+                Paragraph(f"{rec:.2f}", cell_style),  
+                Paragraph(f"<b>{rec_pct:.1f}%</b>", cell_style),  
+                Paragraph(str(caixa or "-"), cell_style),  
+                Paragraph(str(barrilete or "-"), cell_style),  
+                Paragraph(str(litologia or "-"), cell_style),  
+                Paragraph(str(operador or "-"), cell_style)  
+            ])  
+                  
+        taxa_media_global = (total_recup / total_avanco * 100) if total_avanco > 0 else 0.0  
+        manobras_rows.append([  
+            Paragraph("<b>TOTAL</b>", cell_style),  
+            Paragraph("-", cell_style),  
+            Paragraph(f"<b>{manobras[-1][4]:.2f}m</b>", cell_style),  
+            Paragraph(f"<b>{total_avanco:.2f}m</b>", cell_style),  
+            Paragraph(f"<b>{total_recup:.2f}m</b>", cell_style),  
+            Paragraph(f"<b>{taxa_media_global:.1f}%</b>", cell_style),  
+            Paragraph("-", cell_style),  
+            Paragraph("-", cell_style),  
+            Paragraph("<b>Resumo Acumulado</b>", cell_style),  
+            Paragraph("-", cell_style)  
+        ])  
+      
+    table_manobras = Table(manobras_rows, colWidths=[50, 40, 40, 40, 40, 40, 40, 50, 140, 90])  
+    table_manobras.setStyle(TableStyle([  
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),  
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),  
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),  
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),  
+        ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#F8FAFC')]),  
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#E2E8F0')),  
+        ('TOPPADDING', (0,0), (-1,-1), 4),  
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),  
+    ]))  
+    elements.append(table_manobras)  
+    elements.append(Spacer(1, 10))  
+      
+    if obs_fechamento:  
+        elements.append(Paragraph("Observações / Ocorrências de Campo", section_heading))  
+        obs_table = Table([[Paragraph(obs_fechamento, cell_style)]], colWidths=[540])  
+        obs_table.setStyle(TableStyle([  
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F1F5F9')),  
+            ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#CBD5E1')),  
+            ('TOPPADDING', (0,0), (-1,-1), 8),  
+            ('BOTTOMPADDING', (0,0), (-1,-1), 8),  
+        ]))  
+        elements.append(obs_table)  
+        elements.append(Spacer(1, 10))  
+      
+    imagens_relatorio = []  
+    if manobras:  
+        for m in manobras:  
+            for blob in [m[16], m[17], m[18]]:  
+                if blob:  
+                    try:  
+                        img_pil = Image.open(io.BytesIO(blob))  
+                        img_buf = io.BytesIO()  
+                        img_pil.save(img_buf, format='JPEG')  
+                        img_buf.seek(0)  
+                        rl_img = RLImage(img_buf, width=165, height=120)  
+                        imagens_relatorio.append(rl_img)  
+                    except Exception:  
+                        pass  
+      
+    if imagens_relatorio:  
+        elements.append(Paragraph("Anexo Fotográfico de Testemunhos", section_heading))  
+        grid_fotos = []  
+        row_temp = []  
+        for img in imagens_relatorio:  
+            row_temp.append(img)  
+            if len(row_temp) == 3:  
+                grid_fotos.append(row_temp)  
+                row_temp = []  
+        if row_temp:  
+            while len(row_temp) < 3:  
+                row_temp.append(Paragraph("", cell_style))  
+            grid_fotos.append(row_temp)  
+          
+        table_fotos = Table(grid_fotos, colWidths=[180, 180, 180])  
+        table_fotos.setStyle(TableStyle([  
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),  
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),  
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),  
+            ('TOPPADDING', (0,0), (-1,-1), 6),  
+        ]))  
+        elements.append(KeepTogether([table_fotos]))  
+      
+    doc.build(elements)  
+    buffer.seek(0)  
+    return buffer.getvalue()  
 
-if menu == "🏠 Dashboard":
-    st.title("🏠 Dashboard de Sondagem")
+# --- ESTADO DA SESSÃO --- 
+if "logado" not in st.session_state:  
+    st.session_state.logado = False  
 
-    if not lista_furos:
-        st.info("Cadastre o primeiro furo em **Dados do Furo**.")
-        st.stop()
+# --- TELA DE LOGIN --- 
+if not st.session_state.logado:  
+    st.markdown("""  
+        <style>  
+        .stApp { background: linear-gradient(135deg, #1E3A8A 0%, #0F172A 100%); }  
+        div[data-testid="stForm"] {  
+            background-color: #ffffff; padding: 40px; border-radius: 12px;  
+            box-shadow: 0px 10px 25px rgba(0, 0, 0, 0.3); border: none;  
+        }  
+        div[data-testid="stForm"] button {  
+            background-color: #1E3A8A !important; color: white !important;  
+            font-weight: 600 !important; border-radius: 6px !important; width: 100% !important;  
+            height: 45px !important; border: none !important; font-size: 15px !important;  
+        }  
+        #MainMenu, footer, header { visibility: hidden; }  
+        </style>  
+    """, unsafe_allow_html=True)  
+      
+    col1, col2, col3 = st.columns([1, 1.2, 1])  
+    with col2:  
+        st.write("<br><br>", unsafe_allow_html=True)  
+        st.markdown("<h1 style='text-align: center; color: #ffffff; margin-bottom: 0px; font-weight: 800; font-size: 38px;'>BOA FORTUNA</h1>", unsafe_allow_html=True)  
+        st.markdown("<p style='text-align: center; color: #93C5FD; font-size: 12px; letter-spacing: 3px; margin-bottom: 30px; text-transform: uppercase;'>Perfurações e Sondagens Geotécnicas</p>", unsafe_allow_html=True)  
+          
+        with st.form("login_form"):  
+            st.markdown("<h4 style='text-align: center; color: #1E3A8A;'>Acesso Restrito</h4>", unsafe_allow_html=True)  
+            user_input = st.text_input("Usuário", placeholder="Digite seu usuário")  
+            pass_input = st.text_input("Senha", type="password", placeholder="Digite sua senha")  
+            btn_entrar = st.form_submit_button("Acessar Painel")  
+              
+            if btn_entrar:  
+                if user_input == USUARIO_CORRETO and pass_input == SENHA_CORRETA:  
+                    st.session_state.logado = True  
+                    st.rerun()  
+                else:  
+                    st.error("Credenciais inválidas. Tente novamente.")  
 
-    furo_id = st.session_state.furo_atual
-    furo = get_furo(furo_id)
-    s = estatisticas_furo(furo_id)
+# --- PAINEL PRINCIPAL --- 
+else:  
+    st.markdown("""  
+        <style>  
+        .stApp { background-color: #F8FAFC; }  
+        div[data-testid="stSidebar"] { background-color: #0F172A; }  
+        div[data-testid="stSidebar"] * { color: #F8FAFC !important; }  
+        h1, h2, h3 { font-family: 'Segoe UI', sans-serif; color: #1E3A8A; font-weight: 700; }  
+        div.stButton > button {  
+            background-color: #1E3A8A !important; color: #ffffff !important;  
+            border-radius: 6px !important; border: none !important; font-weight: 600 !important;  
+        }  
+        div.stButton > button:hover { background-color: #2563EB !important; }  
+        #MainMenu, footer, header { visibility: hidden; }  
+        </style>  
+    """, unsafe_allow_html=True)  
+      
+    st.sidebar.markdown("<h2 style='color: #60A5FA !important; margin-bottom: 0px;'>BOA FORTUNA</h2>", unsafe_allow_html=True)  
+    st.sidebar.markdown(f"<p style='font-size: 12px; color: #94A3B8 !important;'>Operador: <b>{USUARIO_CORRETO.upper()}</b></p>", unsafe_allow_html=True)  
+          
+    st.sidebar.divider()  
+    st.sidebar.markdown("**Módulos do Sistema**")  
+          
+    opcao = st.sidebar.radio(  
+        "Selecione a etapa:",  
+        [  
+            "1. Cabeçalho e Empresa",  
+            "2. Equipe de Campo",  
+            "3. Registro de Manobra e Testemunho",  
+            "4. Fechamento de Turno & Dashboard",  
+            "5. Dados do Furo & Perfuração"  
+        ],  
+        label_visibility="collapsed"  
+    )  
+      
+    st.sidebar.divider()  
+    if st.sidebar.button("Sair da Conta", use_container_width=True):  
+        st.session_state.logado = False  
+        st.rerun()  
 
-    st.subheader(f"Furo {furo_id}")
-    st.caption(
-        f"Projeto: {furo.get('projeto') or '-'} | "
-        f"Sonda: {furo.get('sonda') or '-'} | "
-        f"Operador: {furo.get('operador') or '-'}"
-    )
+    # ETAPA 1  
+    if opcao == "1. Cabeçalho e Empresa":  
+        st.title("1. Cabeçalho de Identificação & GPS da Praça")  
+        st.caption("Informações institucionais e georreferenciamento automático da praça de sondagem.")  
+                  
+        st.markdown("### 🗺️ Localização Geográfica da Praça (Automática)")  
+        
+        # Componente que faz o rastreio automático do GPS via navegador
+        gps_json = obter_geolocalizacao_gps_auto()  
+        if gps_json:  
+            try:  
+                coords = json.loads(gps_json)  
+                st.session_state["latitude"] = float(coords["lat"])  
+                st.session_state["longitude"] = float(coords["lng"])  
+                st.session_state["precisao_gps"] = float(coords["precisao"])  
+            except Exception:  
+                pass  
+          
+        col_gps1, col_gps2, col_gps3 = st.columns(3)
+        lat_val = st.session_state.get("latitude", "")  
+        lng_val = st.session_state.get("longitude", "")  
+        acc_val = st.session_state.get("precisao_gps", "")  
+                      
+        col_gps1.text_input("Latitude", value=str(lat_val) if lat_val else "Aguardando GPS...", key="lat_input", disabled=True)  
+        col_gps2.text_input("Longitude", value=str(lng_val) if lng_val else "Aguardando GPS...", key="lng_input", disabled=True)  
+        col_gps3.text_input("Precisão (m)", value=f"{acc_val} m" if acc_val else "Aguardando...", key="acc_input", disabled=True)  
+          
+        st.divider()  
+          
+        with st.form("form_cabecalho"):  
+            col1, col2 = st.columns(2)  
+            with col1:  
+                st.session_state["empresa"] = st.text_input("Empresa Executora", value=st.session_state.get("empresa", "Boa Fortuna Perfurações e Sondagens"))  
+                st.session_state["obra"] = st.text_input("Cliente / Nome da Obra", value=st.session_state.get("obra", ""))  
+            with col2:  
+                st.session_state["cidade"] = st.text_input("Cidade / UF", value=st.session_state.get("cidade", ""))  
+                st.session_state["data_campo"] = st.date_input("Data do Ensaio", value=st.session_state.get("data_campo", date.today()))  
+                          
+            if st.form_submit_button("Salvar Identificação"):  
+                st.success("Dados do cabeçalho e GPS da praça salvos com sucesso!")  
 
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("⛏️ Metros perfurados", f"{s['metros']:.2f} m")
-    c2.metric("🪨 Recuperação", f"{s['rec_pct']:.1f}%")
-    c3.metric("⏱️ Horas trabalhadas", f"{s['h_trab']:.2f} h")
-    c4.metric("🛑 Horas paradas", f"{s['h_parado']:.2f} h")
+    # ETAPA 2  
+    elif opcao == "2. Equipe de Campo":  
+        st.title("2. Equipe Responsável")  
+        st.caption("Cadastro dos profissionais e responsáveis técnicos da operação.")  
+                  
+        with st.form("form_equipe"):  
+            col1, col2 = st.columns(2)  
+            with col1:  
+                st.session_state["coordenador"] = st.text_input("Coordenador de Campo", value=st.session_state.get("coordenador", ""))  
+                st.session_state["supervisor"] = st.text_input("Supervisor / TST", value=st.session_state.get("supervisor", ""))  
+            with col2:  
+                st.session_state["sondador"] = st.text_input("Sondador Principal", value=st.session_state.get("sondador", ""))  
+                st.session_state["auxiliares"] = st.text_input("Auxiliares de Sondagem", value=st.session_state.get("auxiliares", ""))  
+              
+            if st.form_submit_button("Salvar Equipe"):  
+                st.success("Dados da equipe salvos com sucesso!")  
 
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("📈 Produtividade", f"{s['prod_h']:.2f} m/h")
-    c2.metric("📦 Metros recuperados", f"{s['recuperados']:.2f} m")
-    c3.metric("🔩 Manobras", s["manobras"])
-    c4.metric("📍 Profundidade atual", f"{proximo_intervalo(furo_id):.2f} m")
+    # ETAPA 3  
+    elif opcao == "3. Registro de Manobra e Testemunho":  
+        st.title("3. Registro de Manobra e Testemunho")  
+        st.caption("Lançamento automatizado do avanço, recuperação, caixas e tempos operacionais.")  
+                  
+        furo_atual = st.text_input("Informação - Furo (Identificação)", value=st.session_state.get("furo_id", "SP-01"), key="input_furo_manobra")  
+        st.session_state["furo_id"] = furo_atual  
+          
+        manobras_furo = buscar_manobras(furo_atual)  
+        prox_de = manobras_furo[-1][4] if manobras_furo else 0.0  
+        prox_ate = round(prox_de + 1.5, 2)  
+                  
+        st.info(f"📍 Profundidade Atual Perfurada para o Furo **{furo_atual}**: **{prox_de:.2f} m**")  
+        
+        # --- CÁLCULOS DINÂMICOS DE TEMPO E PROFUNDIDADE ---
+        hora_atual = datetime.now().time()
+        hora_inicio_padrao = (datetime.now() - timedelta(hours=1, minutes=30)).time() if not manobras_furo else datetime.now().time()
 
-    df = get_manobras(furo_id)
-    if not df.empty:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            data_manobra = st.date_input("Data", value=date.today())
+        with c2:
+            barrilete = st.text_input("Barrilete", value="HQ")
+        with c3:
+            operador_sonda = st.text_input("Operador Sonda", value=st.session_state.get("sondador", ""))
+
+        c4, c5, c6, c7 = st.columns(4)  
+        with c4:  
+            de_m = st.number_input("Profundidade Inicial (m)", min_value=0.0, step=0.5, value=float(prox_de), format="%.2f")  
+        with c5:  
+            ate_m = st.number_input("Profundidade Final (m)", min_value=0.0, step=0.5, value=float(prox_ate), format="%.2f")  
+        with c6:  
+            recup_m = st.number_input("Recuperação (m)", min_value=0.0, step=0.1, value=round(max(0.0, ate_m - de_m), 2), format="%.2f")  
+        with c7:  
+            num_caixa = st.text_input("Caixa", value=manobras_furo[-1][8] if manobras_furo else "01")  
+
+        # Métricas calculadas automaticamente
+        avanco_calc = round(max(0.0, ate_m - de_m), 2)
+        taxa_recup = min(100.0, round((recup_m / avanco_calc * 100), 1)) if avanco_calc > 0 else 0.0  
+
+        st.caption(f"⚡ **Avanço Calculado:** {avanco_calc:.2f} m | **Taxa de Recuperação:** {taxa_recup:.1f}%")
+
+        c8, c9, c10 = st.columns(3)
+        with c8:
+            horario_inicio = st.time_input("Horário Início", value=hora_inicio_padrao)
+        with c9:
+            horario_fim = st.time_input("Horário Fim (Auto)", value=hora_atual)
+            
+        # Cálculo automático de horas trabalhadas e tempo de manobra
+        dt_ini = datetime.combine(date.today(), horario_inicio)
+        dt_fim = datetime.combine(date.today(), horario_fim)
+        
+        if dt_fim < dt_ini:
+            dt_fim += timedelta(days=1)
+            
+        diferenca_segundos = (dt_fim - dt_ini).total_seconds()
+        horas_trabalhadas = round(diferenca_segundos / 3600.0, 2)
+        minutos_totais = int(diferenca_segundos // 60)
+        horas_fmt = minutos_totais // 60
+        mins_fmt = minutos_totais % 60
+        tempo_manobra_auto = f"{horas_fmt:02d}h {mins_fmt:02d}m"
+
+        with c10:
+            st.text_input("Tempo de Manobra (Auto)", value=tempo_manobra_auto, disabled=True)
+
+        c11, c12, c13 = st.columns(3)
+        with c11:
+            desc_litologica = st.text_input("Litologia", placeholder="Ex: Solo residual, rocha alterada...")  
+        with c12:
+            observacoes = st.text_input("Observações", placeholder="Ex: Perda de água, troca de coroa...")  
+        with c13:
+            horas_paradas = st.number_input("Horas Paradas / Interrupções", min_value=0.0, step=0.25, value=0.0)
+
+        st.markdown("---")  
+        st.subheader("Registro Fotográfico (Até 3 Fotos)")  
+                      
+        tab_galeria, tab_camera = st.tabs(["📁 Selecionar da Galeria", "📸 Câmera ao Vivo"])  
+        fotos_manobra_pil = []  
+                      
+        with tab_galeria:  
+            fotos_upload = st.file_uploader("Upload de imagens de campo", type=["jpg", "png", "jpeg"], accept_multiple_files=True)  
+            if fotos_upload:  
+                for f in fotos_upload[:3]:  
+                    fotos_manobra_pil.append(Image.open(f))  
+                      
+        with tab_camera:  
+            foto_cam = st.camera_input("Capturar foto do testemunho/caixa")  
+            if foto_cam and len(fotos_manobra_pil) < 3:  
+                fotos_manobra_pil.append(Image.open(foto_cam))  
+          
+        if st.button("Adicionar Manobra Automática", use_container_width=True):  
+            if ate_m > de_m:  
+                salvar_manobra(
+                    furo=furo_atual, 
+                    data_m=data_manobra, 
+                    de=de_m, 
+                    ate=ate_m, 
+                    avanco=avanco_calc, 
+                    recup=recup_m, 
+                    taxa=taxa_recup, 
+                    caixa=num_caixa, 
+                    barrilete=barrilete, 
+                    h_inicio=horario_inicio.strftime("%H:%M"), 
+                    h_fim=horario_fim.strftime("%H:%M"), 
+                    tempo_man=tempo_manobra_auto, 
+                    litologia=desc_litologica, 
+                    observacoes=observacoes, 
+                    operador=operador_sonda, 
+                    h_trab=horas_trabalhadas,
+                    h_parado=horas_paradas,
+                    fotos_pil=fotos_manobra_pil
+                )  
+                st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m salva com sucesso! Durou: {tempo_manobra_auto}")  
+                st.rerun()  
+            else:  
+                st.error("A Profundidade Final precisa ser maior que a Profundidade Inicial.")  
+          
+        st.divider()  
+        st.subheader(f"Histórico de Manobras e Testemunhos: {furo_atual}")  
+          
+        if manobras_furo:  
+            dados_tabela = []  
+            for row in manobras_furo:  
+                m_id = row[0]
+                dt_m = row[2]
+                de = row[3] or 0.0
+                ate = row[4] or 0.0
+                avanc = row[5] or 0.0
+                rec = row[6] or 0.0
+                rec_pct = row[7] or 0.0
+                caixa = row[8]
+                barrilete = row[9]
+                h_ini = row[10]
+                h_fim = row[11]
+                t_man = row[12]
+                lito = row[13]
+                obs = row[14]
+                operador = row[15]
+                h_tr = row[19] or 0.0
+
+                dados_tabela.append([
+                    m_id, furo_atual, dt_m, de, ate, avanc, rec, f"{rec_pct:.1f}%", 
+                    caixa, barrilete, h_ini, h_fim, t_man, f"{h_tr:.2f} h", lito, obs, operador
+                ])  
+              
+            df_manobras = pd.DataFrame(  
+                dados_tabela,  
+                columns=[
+                    "ID", "Furo", "Data", "Profundidade Inicial", "Profundidade Final", 
+                    "Avanço", "Recuperação", "Recuperação %", "Caixa", "Barrilete", 
+                    "Horário Início", "Horário Fim", "Tempo", "Horas Trab.", "Litologia", 
+                    "Observações", "Operador Sonda"
+                ]  
+            )  
+            st.dataframe(df_manobras, use_container_width=True)  
+              
+            col_excluir, col_btn = st.columns([3, 1])  
+            with col_excluir:  
+                opcoes_manobra = {f"ID #{row[0]} | De {row[3]:.2f}m até {row[4]:.2f}m": row[0] for row in manobras_furo}  
+                manobra_selecionada = st.selectbox("Selecione uma manobra para remover:", list(opcoes_manobra.keys()))  
+                          
+            with col_btn:  
+                st.write("<br>", unsafe_allow_html=True)  
+                if st.button("Excluir Manobra", use_container_width=True):  
+                    id_para_deletar = opcoes_manobra[manobra_selecionada]  
+                    deletar_manobra(id_para_deletar)  
+                    st.success("Manobra removida com sucesso!")  
+                    st.rerun()  
+        else:  
+            st.info("Nenhuma manobra cadastrada para este furo até o momento.")  
+
+    # ETAPA 4  
+    elif opcao == "4. Fechamento de Turno & Dashboard":  
+        st.title("4. Fechamento de Turno & Dashboard Diário")  
+        st.caption("Visão analítica de produtividade, horas trabalhadas e furos perfurados no dia.")  
+          
+        conn = sqlite3.connect(DB_NAME, timeout=10)
+        df_todas_manobras = pd.read_sql_query("SELECT * FROM manobras_testemunho", conn)
+        df_boletins = pd.read_sql_query("SELECT * FROM boletins_campo", conn)
+        conn.close()
+
+        # DASHBOARD GERAL DE PRODUÇÃO E HORAS TRABALHADAS
+        st.markdown("### 📊 Dashboard Diário de Operação e Horas Trabalhadas")
+        
+        if not df_todas_manobras.empty:
+            df_todas_manobras["data_manobra"] = df_todas_manobras["data_manobra"].fillna(date.today().strftime("%Y-%m-%d"))
+            data_filtro = st.date_input("Filtrar Dashboard por Data:", value=date.today())
+            
+            df_dia = df_todas_manobras[df_todas_manobras["data_manobra"] == str(data_filtro)]
+            
+            # Métricas em Cards
+            total_furos_dia = df_dia["furo_id"].nunique() if not df_dia.empty else 0
+            metras_perfuradas_dia = df_dia["avanco_m"].sum() if not df_dia.empty else 0.0
+            horas_produtivas_dia = df_dia["horas_trab"].sum() if not df_dia.empty else 0.0
+            horas_paradas_dia = df_dia["horas_parado"].sum() if not df_dia.empty else 0.0
+            
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric("Furos Trabalhados no Dia", f"{total_furos_dia}")
+            d2.metric("Metros Perfurados no Dia", f"{metras_perfuradas_dia:.2f} m")
+            d3.metric("Horas Trabalhadas (Perfuração)", f"{horas_produtivas_dia:.2f} h")
+            d4.metric("Horas Paradas / Interrupções", f"{horas_paradas_dia:.2f} h")
+
+            st.divider()
+
+            dash_col1, dash_col2 = st.columns(2)
+
+            with dash_col1:
+                # Gráfico de Furos vs Metragem
+                df_furos_grouped = df_todas_manobras.groupby(["data_manobra", "furo_id"])["avanco_m"].sum().reset_index()
+                fig_furos = px.bar(
+                    df_furos_grouped, 
+                    x="data_manobra", 
+                    y="avanco_m", 
+                    color="furo_id",
+                    title="Avanço Perfurado (m) por Furo por Dia",
+                    labels={"data_manobra": "Data", "avanco_m": "Metros Perfurados (m)", "furo_id": "Furo"}
+                )
+                st.plotly_chart(fig_furos, use_container_width=True)
+
+            with dash_col2:
+                # Gráfico de Horas Trabalhadas vs Paradas
+                df_horas_grouped = df_todas_manobras.groupby("data_manobra")[["horas_trab", "horas_parado"]].sum().reset_index()
+                fig_horas = px.bar(
+                    df_horas_grouped,
+                    x="data_manobra",
+                    y=["horas_trab", "horas_parado"],
+                    title="Distribuição Diária de Horas (Trabalhadas x Paradas)",
+                    labels={"data_manobra": "Data", "value": "Horas (h)", "variable": "Categoria"},
+                    barmode="stack"
+                )
+                st.plotly_chart(fig_horas, use_container_width=True)
+        else:
+            st.info("Sem dados operacionais para compor os gráficos do dashboard.")
+
         st.divider()
-        a,b = st.columns(2)
 
-        with a:
-            fig = px.bar(
-                df, x="id", y=["avanco_m","recup_m"],
-                barmode="group",
-                labels={"value":"Metros","id":"Manobra"},
-                title="Avanço x Recuperação"
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        # FECHAMENTO POR FURO
+        st.subheader("📄 Emissão do Boletim Diário do Furo em PDF")
+        furo_sel = st.text_input("Identificação do Furo para Emissão do BDS", value=st.session_state.get("furo_id", "SP-01"))  
+        manobras = buscar_manobras(furo_sel)  
+          
+        if manobras:  
+            tot_avanco = sum([m[5] or 0.0 for m in manobras])  
+            tot_recup = sum([m[6] or 0.0 for m in manobras])  
+            taxa_global = (tot_recup / tot_avanco * 100) if tot_avanco > 0 else 0.0  
+              
+            obs_pdf = st.text_area("Observações Adicionais para o Relatório Final", value="Trabalho realizado dentro das normas de segurança.")  
+              
+            if st.button("Gerar Boletim em PDF", use_container_width=True):  
+                pdf_bytes = gerar_pdf_boletim(furo_sel, obs_pdf)  
+                st.download_button(  
+                    label="📥 Baixar Boletim Diário de Sondagem (PDF)",  
+                    data=pdf_bytes,  
+                    file_name=f"BDS_{furo_sel}_{datetime.now().strftime('%Y%m%d')}.pdf",  
+                    mime="application/pdf",  
+                    use_container_width=True  
+                )  
+        else:  
+            st.warning(f"Nenhum registro encontrado para o furo **{furo_sel}**.")  
 
-        with b:
-            fig2 = px.line(
-                df, x="ate_m", y="taxa_recup_pct",
-                markers=True,
-                labels={"ate_m":"Profundidade (m)","taxa_recup_pct":"Recuperação (%)"},
-                title="Recuperação em Profundidade"
-            )
-            st.plotly_chart(fig2, use_container_width=True)
-
-        st.subheader("Últimas manobras")
-        cols = ["id","de_m","ate_m","avanco_m","recup_m",
-                "taxa_recup_pct","caixa","barrilete","horas_trab","horas_parado"]
-        st.dataframe(df[cols].tail(10), use_container_width=True, hide_index=True)
-    else:
-        st.info("Ainda não existem manobras para este furo.")
-
-# ============================================================
-# DADOS DO FURO
-# ============================================================
-
-elif menu == "📋 Dados do Furo":
-    st.title("📋 Dados do Furo")
-    st.caption("Cadastro completo. O sistema salva e atualiza automaticamente.")
-
-    furo_id = st.text_input(
-        "ID do Furo",
-        value=st.session_state.furo_atual,
-        placeholder="BF-001"
-    ).strip().upper()
-
-    existente = get_furo(furo_id) if furo_id else None
-
-    if existente:
-        st.success(f"Furo {furo_id} encontrado. Você está editando o cadastro.")
-        d = existente
-    else:
-        d = {
-            "furo_id": furo_id, "projeto": "", "empresa": "Boa Fortuna Perfurações e Sondagens",
-            "obra_cliente": "", "cidade_uf": "", "sonda": "", "tipo_sondagem": "Rotativa",
-            "operador": "", "auxiliares": "", "coordenador": "", "supervisor": "",
-            "latitude": None, "longitude": None, "precisao_gps_m": None,
-            "datum": "SIRGAS 2000", "azimute": 0.0, "inclinacao": -90.0,
-            "diametro": "", "data_inicio": str(date.today()), "data_fim": "",
-            "profundidade_final": 0, "observacao": ""
-        }
-
-    with st.form("form_furo"):
-        st.subheader("Identificação")
-        c1,c2,c3 = st.columns(3)
-        projeto = c1.text_input("Projeto", value=d.get("projeto") or "")
-        empresa = c2.text_input("Empresa", value=d.get("empresa") or "")
-        obra = c3.text_input("Cliente / Obra", value=d.get("obra_cliente") or "")
-
-        c1,c2,c3 = st.columns(3)
-        cidade = c1.text_input("Cidade / UF", value=d.get("cidade_uf") or "")
-        sonda = c2.text_input("Sonda", value=d.get("sonda") or "")
-        tipo = c3.selectbox(
-            "Tipo de sondagem",
-            ["Rotativa","Circulação reversa","Percussão","Geotécnica","Outro"],
-            index=["Rotativa","Circulação reversa","Percussão","Geotécnica","Outro"].index(
-                d.get("tipo_sondagem") if d.get("tipo_sondagem") in
-                ["Rotativa","Circulação reversa","Percussão","Geotécnica","Outro"]
-                else "Rotativa"
-            )
-        )
-
-        st.subheader("Equipe")
-        c1,c2,c3,c4 = st.columns(4)
-        operador = c1.text_input("Operador", value=d.get("operador") or "")
-        auxiliares = c2.text_input("Auxiliar(es)", value=d.get("auxiliares") or "")
-        coordenador = c3.text_input("Coordenador", value=d.get("coordenador") or "")
-        supervisor = c4.text_input("Supervisor / TST", value=d.get("supervisor") or "")
-
-        st.subheader("Localização e orientação")
-        c1,c2,c3 = st.columns(3)
-        latitude = c1.number_input(
-            "Latitude", value=float(d["latitude"]) if d.get("latitude") is not None else 0.0,
-            format="%.7f"
-        )
-        longitude = c2.number_input(
-            "Longitude", value=float(d["longitude"]) if d.get("longitude") is not None else 0.0,
-            format="%.7f"
-        )
-        datum = c3.selectbox("Datum", ["SIRGAS 2000","WGS 84"],
-                             index=0 if d.get("datum") != "WGS 84" else 1)
-
-        c1,c2,c3,c4 = st.columns(4)
-        precisao = c1.number_input(
-            "Precisão GPS (m)", min_value=0.0,
-            value=float(d["precisao_gps_m"] or 0)
-        )
-        azimute = c2.number_input("Azimute (°)", 0.0, 360.0,
-                                  float(d.get("azimute") or 0), step=1.0)
-        inclinacao = c3.number_input("Inclinação (°)", -90.0, 90.0,
-                                      float(d.get("inclinacao") or -90), step=1.0)
-        diametro = c4.text_input("Diâmetro", value=d.get("diametro") or "")
-
-        c1,c2 = st.columns(2)
-        data_inicio = c1.date_input(
-            "Data de início",
-            value=datetime.strptime(d["data_inicio"], "%Y-%m-%d").date()
-            if d.get("data_inicio") else date.today()
-        )
-        data_fim = c2.date_input(
-            "Data de término",
-            value=datetime.strptime(d["data_fim"], "%Y-%m-%d").date()
-            if d.get("data_fim") else date.today()
-        )
-
-        obs = st.text_area("Observações", value=d.get("observacao") or "")
-
-        salvar = st.form_submit_button(
-            "💾 Salvar / Atualizar Furo", use_container_width=True
-        )
-
-    colgps,_ = st.columns([1,3])
-    with colgps:
-        if st.button("📍 Capturar GPS automático", use_container_width=True):
-            capturar_gps()
-
-    if salvar:
-        if not furo_id:
-            st.error("Informe o ID do furo.")
-        else:
-            # Se GPS automático foi capturado, ele tem prioridade.
-            lat_final = st.session_state.get("latitude", latitude)
-            lng_final = st.session_state.get("longitude", longitude)
-            prec_final = st.session_state.get("precisao_gps", precisao)
-
-            salvar_furo({
-                "furo_id": furo_id,
-                "projeto": projeto,
-                "empresa": empresa,
-                "obra_cliente": obra,
-                "cidade_uf": cidade,
-                "sonda": sonda,
-                "tipo_sondagem": tipo,
-                "operador": operador,
-                "auxiliares": auxiliares,
-                "coordenador": coordenador,
-                "supervisor": supervisor,
-                "latitude": lat_final if lat_final != 0 else None,
-                "longitude": lng_final if lng_final != 0 else None,
-                "precisao_gps_m": prec_final if prec_final != 0 else None,
-                "datum": datum,
-                "azimute": azimute,
-                "inclinacao": inclinacao,
-                "diametro": diametro,
-                "data_inicio": data_inicio.isoformat(),
-                "data_fim": data_fim.isoformat(),
-                "profundidade_final": proximo_intervalo(furo_id),
-                "observacao": obs,
-            })
-            st.session_state.furo_atual = furo_id
-            st.success(f"Furo {furo_id} salvo com sucesso.")
-            st.rerun()
-
-# ============================================================
-# MANOBRAS
-# ============================================================
-
-elif menu == "🔩 Manobras":
-    st.title("🔩 Registro de Manobras")
-    furo_id = st.session_state.furo_atual
-
-    if not get_furo(furo_id):
-        st.warning("Cadastre o furo primeiro.")
-        st.stop()
-
-    atual = proximo_intervalo(furo_id)
-    st.info(f"Furo **{furo_id}** | Profundidade automática atual: **{atual:.2f} m**")
-
-    with st.form("nova_manobra"):
-        c1,c2,c3 = st.columns(3)
-        data_m = c1.date_input("Data", date.today())
-        barrilete = c2.text_input("Barrilete", "HQ")
-        operador = c3.text_input(
-            "Operador",
-            get_furo(furo_id).get("operador") or ""
-        )
-
-        c1,c2,c3,c4 = st.columns(4)
-        de = c1.number_input("De (m)", min_value=0.0,
-                             value=float(atual), step=0.5, format="%.2f")
-        ate = c2.number_input("Até (m)", min_value=0.0,
-                              value=float(atual+1.5), step=0.5, format="%.2f")
-        avanco = round(max(0, ate-de), 2)
-        recup = c3.number_input(
-            "Recuperação (m)", min_value=0.0,
-            value=float(avanco), step=0.1, format="%.2f"
-        )
-        caixa = c4.text_input("Caixa", "01")
-
-        taxa = (recup/avanco*100) if avanco > 0 else 0
-        taxa = min(taxa, 100)
-        st.metric("Recuperação calculada", f"{taxa:.1f}%")
-
-        c1,c2,c3,c4 = st.columns(4)
-        inicio = c1.time_input("Horário início", time(8,0))
-        fim = c2.time_input("Horário fim", time(9,30))
-        tempo_min = calcular_tempo_min(inicio, fim)
-        h_trab = c3.number_input(
-            "Horas trabalhadas",
-            min_value=0.0, value=round(tempo_min/60,2), step=0.25
-        )
-        h_parado = c4.number_input(
-            "Horas paradas", min_value=0.0, value=0.0, step=0.25
-        )
-
-        c1,c2 = st.columns(2)
-        motivo = c1.text_input("Motivo da paralisação", "Nenhum")
-        litologia = c2.text_input("Litologia")
-
-        c1,c2,c3 = st.columns(3)
-        alteracao = c1.text_input("Alteração")
-        mineralizacao = c2.text_input("Mineralização")
-        estruturas = c3.text_input("Estruturas")
-
-        observacoes = st.text_area("Observações")
-
-        st.markdown("### 📸 Fotos da manobra")
-        uploads = st.file_uploader(
-            "Selecione até 3 fotos",
-            type=["jpg","jpeg","png"],
-            accept_multiple_files=True
-        )
-
-        salvar = st.form_submit_button(
-            "➕ Salvar Manobra", use_container_width=True
-        )
-
-    if salvar:
-        if ate <= de:
-            st.error("A profundidade final deve ser maior que a inicial.")
-        elif recup > avanco and avanco > 0:
-            st.error("A recuperação não pode ser maior que o avanço.")
-        else:
-            fotos = [otimizar_imagem(x) for x in (uploads or [])[:3]]
-            while len(fotos) < 3:
-                fotos.append(None)
-
-            salvar_manobra({
-                "furo_id": furo_id,
-                "data_manobra": data_m.isoformat(),
-                "de_m": de,
-                "ate_m": ate,
-                "avanco_m": avanco,
-                "recup_m": recup,
-                "taxa_recup_pct": taxa,
-                "caixa": caixa,
-                "barrilete": barrilete,
-                "horario_inicio": inicio.strftime("%H:%M"),
-                "horario_fim": fim.strftime("%H:%M"),
-                "tempo_manobra_min": tempo_min,
-                "horas_trab": h_trab,
-                "horas_parado": h_parado,
-                "motivo_parada": motivo,
-                "litologia": litologia,
-                "alteracao": alteracao,
-                "mineralizacao": mineralizacao,
-                "estruturas": estruturas,
-                "observacoes": observacoes,
-                "operador": operador,
-                "foto1": fotos[0],
-                "foto2": fotos[1],
-                "foto3": fotos[2],
-            })
-            st.success(f"Manobra {de:.2f} → {ate:.2f} m salva.")
-            st.rerun()
-
-    df = get_manobras(furo_id)
-    st.divider()
-    st.subheader(f"Histórico — {furo_id}")
-
-    if df.empty:
-        st.info("Nenhuma manobra registrada.")
-    else:
-        view = df[[
-            "id","data_manobra","de_m","ate_m","avanco_m",
-            "recup_m","taxa_recup_pct","caixa","barrilete",
-            "horario_inicio","horario_fim","horas_trab","horas_parado",
-            "motivo_parada","litologia"
-        ]].copy()
-        st.dataframe(view, use_container_width=True, hide_index=True)
-
-        opcoes = {
-            f"#{int(r.id)} — {r.de_m:.2f} → {r.ate_m:.2f} m":
-            int(r.id)
-            for _, r in df.iterrows()
-        }
-        c1,c2 = st.columns([3,1])
-        escolha = c1.selectbox("Manobra", list(opcoes.keys()))
-        if c2.button("🗑️ Excluir", use_container_width=True):
-            excluir_manobra(opcoes[escolha])
-            st.success("Manobra excluída.")
-            st.rerun()
-
-# ============================================================
-# TESTEMUNHO / FOTOS
-# ============================================================
-
-elif menu == "🪨 Testemunho / Fotos":
-    st.title("🪨 Testemunho e Registro Fotográfico")
-    furo_id = st.session_state.furo_atual
-    df = get_manobras(furo_id)
-
-    if df.empty:
-        st.info("Registre manobras com fotos primeiro.")
-    else:
-        for _, r in df.iterrows():
-            fotos = [blob_to_image(r[c]) for c in ["foto1","foto2","foto3"]]
-            fotos = [x for x in fotos if x is not None]
-            if fotos:
-                with st.expander(
-                    f"📦 Caixa {r['caixa']} | {r['de_m']:.2f} → {r['ate_m']:.2f} m"
-                ):
-                    st.write(
-                        f"Recuperação: **{r['taxa_recup_pct']:.1f}%** | "
-                        f"Litologia: **{r['litologia'] or '-'}**"
-                    )
-                    cols = st.columns(len(fotos))
-                    for col, img in zip(cols, fotos):
-                        col.image(img, use_container_width=True)
-
-# ============================================================
-# GEOLOGIA
-# ============================================================
-
-elif menu == "🧱 Geologia":
-    st.title("🧱 Geologia")
-    furo_id = st.session_state.furo_atual
-
-    atual = proximo_intervalo(furo_id)
-    with st.form("form_geo"):
-        c1,c2 = st.columns(2)
-        de = c1.number_input("De (m)", min_value=0.0, value=0.0, step=0.5)
-        ate = c2.number_input("Até (m)", min_value=0.0,
-                              value=max(1.0, atual), step=0.5)
-
-        c1,c2 = st.columns(2)
-        litologia = c1.text_input("Litologia")
-        alteracao = c2.text_input("Alteração")
-
-        c1,c2 = st.columns(2)
-        mineralizacao = c1.text_input("Mineralização")
-        estruturas = c2.text_input("Estruturas")
-
-        observacoes = st.text_area("Observações")
-        salvar = st.form_submit_button(
-            "➕ Salvar Intervalo Geológico", use_container_width=True
-        )
-
-    if salvar:
-        if ate <= de:
-            st.error("Até deve ser maior que De.")
-        else:
-            salvar_geologia({
-                "furo_id": furo_id,
-                "de_m": de, "ate_m": ate,
-                "litologia": litologia,
-                "alteracao": alteracao,
-                "mineralizacao": mineralizacao,
-                "estruturas": estruturas,
-                "observacoes": observacoes
-            })
-            st.success("Intervalo geológico salvo.")
-            st.rerun()
-
-    df = get_geologia(furo_id)
-    if not df.empty:
-        st.subheader("Perfil geológico registrado")
-        st.dataframe(
-            df[["id","de_m","ate_m","litologia","alteracao",
-                "mineralizacao","estruturas","observacoes"]],
-            use_container_width=True, hide_index=True
-        )
-
-        opcoes = {
-            f"#{int(r.id)} — {r.de_m:.2f} → {r.ate_m:.2f} m":
-            int(r.id)
-            for _, r in df.iterrows()
-        }
-        escolha = st.selectbox("Intervalo", list(opcoes.keys()))
-        if st.button("🗑️ Excluir intervalo geológico"):
-            excluir_geologia(opcoes[escolha])
-            st.rerun()
-
-# ============================================================
-# PDF
-# ============================================================
-
-elif menu == "📄 Relatório PDF":
-    st.title("📄 Relatório de Sondagem")
-    furo_id = st.session_state.furo_atual
-    s = estatisticas_furo(furo_id)
-
-    st.write(
-        f"Furo **{furo_id}** — {s['metros']:.2f} m perfurados — "
-        f"{s['rec_pct']:.1f}% de recuperação"
-    )
-
-    if st.button("📄 Gerar Boletim PDF", use_container_width=True):
-        pdf = gerar_pdf(furo_id)
-        st.download_button(
-            "📥 Baixar PDF",
-            data=pdf,
-            file_name=f"BDS_{furo_id}_{date.today().isoformat()}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
-
-# ============================================================
-# BANCO
-# ============================================================
-
-elif menu == "🗃️ Banco de Dados":
-    st.title("🗃️ Banco de Dados")
-    st.caption("Visão administrativa dos dados gravados no SQLite.")
-
-    furos = get_furos()
-    st.subheader("Furos")
-    if furos.empty:
-        st.info("Nenhum furo cadastrado.")
-    else:
-        st.dataframe(furos, use_container_width=True, hide_index=True)
-
-        st.divider()
-        st.subheader("Exportação")
-
-        csv = furos.to_csv(index=False).encode("utf-8-sig")
-        st.download_button(
-            "📥 Exportar cadastro dos furos — CSV",
-            csv,
-            "furos.csv",
-            "text/csv"
-        )
-
-    conn = get_conn()
-    man = pd.read_sql_query("SELECT * FROM manobras ORDER BY id DESC", conn)
-    geo = pd.read_sql_query("SELECT * FROM geologia ORDER BY id DESC", conn)
-    conn.close()
-
-    st.subheader("Manobras")
-    st.dataframe(man.drop(columns=["foto1","foto2","foto3"], errors="ignore"),
-                 use_container_width=True, hide_index=True)
-
-    if not man.empty:
-        st.download_button(
-            "📥 Exportar manobras — CSV",
-            man.drop(columns=["foto1","foto2","foto3"], errors="ignore")
-            .to_csv(index=False).encode("utf-8-sig"),
-            "manobras.csv",
-            "text/csv"
-        )
-
-    st.subheader("Geologia")
-    st.dataframe(geo, use_container_width=True, hide_index=True)
-
-    if not geo.empty:
-        st.download_button(
-            "📥 Exportar geologia — CSV",
-            geo.to_csv(index=False).encode("utf-8-sig"),
-            "geologia.csv",
-            "text/csv"
-        )
+    # ETAPA 5  
+    elif opcao == "5. Dados do Furo & Perfuração":  
+        st.title("5. Resumo Geral e Cadastro de Furos")  
+        st.caption("Visão consolidada do banco de dados com todos os boletins e manobras gravadas.")  
+          
+        conn = sqlite3.connect(DB_NAME, timeout=10)  
+        df_boletins = pd.read_sql_query("SELECT * FROM boletins_campo ORDER BY id DESC", conn)  
+        df_todas_manobras = pd.read_sql_query("SELECT * FROM manobras_testemunho ORDER BY id DESC", conn)  
+        conn.close()  
+          
+        st.subheader("📋 Resumo dos Boletins Registrados")  
+        if not df_boletins.empty:  
+            st.dataframe(df_boletins, use_container_width=True)  
+        else:  
+            st.info("Nenhum boletim registrado.")  
+              
+        st.subheader("⛏️ Todas as Manobras do Banco de Dados")  
+        if not df_todas_manobras.empty:  
+            st.dataframe(df_todas_manobras, use_container_width=True)  
+        else:  
+            st.info("Nenhuma manobra registrada.")
