@@ -137,7 +137,6 @@ def obter_geolocalizacao_gps_auto():
         );  
     }
     
-    // Dispara a captura assim que carrega
     window.onload = capturarGPS;
     </script>  
     """  
@@ -261,6 +260,14 @@ def buscar_manobras(furo_id=None):
     dados = c.fetchall()  
     conn.close()  
     return dados  
+
+def buscar_furos_cadastrados():
+    conn = sqlite3.connect(DB_NAME, timeout=10)
+    c = conn.cursor()
+    c.execute('SELECT DISTINCT furo_id FROM boletins_campo ORDER BY furo_id ASC')
+    furos = [r[0] for r in c.fetchall()]
+    conn.close()
+    return furos
 
 def buscar_dados_furo(furo_id):  
     try:  
@@ -546,7 +553,6 @@ else:
                   
         st.markdown("### 🗺️ Localização Geográfica da Praça (Automática)")  
         
-        # Componente que faz o rastreio automático do GPS via navegador
         gps_json = obter_geolocalizacao_gps_auto()  
         if gps_json:  
             try:  
@@ -611,7 +617,6 @@ else:
                   
         st.info(f"📍 Profundidade Atual Perfurada para o Furo **{furo_atual}**: **{prox_de:.2f} m**")  
         
-        # --- CÁLCULOS DINÂMICOS DE TEMPO E PROFUNDIDADE ---
         hora_atual = datetime.now().time()
         hora_inicio_padrao = (datetime.now() - timedelta(hours=1, minutes=30)).time() if not manobras_furo else datetime.now().time()
 
@@ -633,7 +638,6 @@ else:
         with c7:  
             num_caixa = st.text_input("Caixa", value=manobras_furo[-1][8] if manobras_furo else "01")  
 
-        # Métricas calculadas automaticamente
         avanco_calc = round(max(0.0, ate_m - de_m), 2)
         taxa_recup = min(100.0, round((recup_m / avanco_calc * 100), 1)) if avanco_calc > 0 else 0.0  
 
@@ -645,7 +649,6 @@ else:
         with c9:
             horario_fim = st.time_input("Horário Fim (Auto)", value=hora_atual)
             
-        # Cálculo automático de horas trabalhadas e tempo de manobra
         dt_ini = datetime.combine(date.today(), horario_inicio)
         dt_fim = datetime.combine(date.today(), horario_fim)
         
@@ -688,193 +691,147 @@ else:
                 fotos_manobra_pil.append(Image.open(foto_cam))  
           
         if st.button("Adicionar Manobra Automática", use_container_width=True):  
-            if ate_m > de_m:  
-                salvar_manobra(
-                    furo=furo_atual, 
-                    data_m=data_manobra, 
-                    de=de_m, 
-                    ate=ate_m, 
-                    avanco=avanco_calc, 
-                    recup=recup_m, 
-                    taxa=taxa_recup, 
-                    caixa=num_caixa, 
-                    barrilete=barrilete, 
-                    h_inicio=horario_inicio.strftime("%H:%M"), 
-                    h_fim=horario_fim.strftime("%H:%M"), 
-                    tempo_man=tempo_manobra_auto, 
-                    litologia=desc_litologica, 
-                    observacoes=observacoes, 
-                    operador=operador_sonda, 
-                    h_trab=horas_trabalhadas,
-                    h_parado=horas_paradas,
-                    fotos_pil=fotos_manobra_pil
-                )  
-                st.success(f"Manobra de {de_m:.2f}m a {ate_m:.2f}m salva com sucesso! Durou: {tempo_manobra_auto}")  
-                st.rerun()  
-            else:  
-                st.error("A Profundidade Final precisa ser maior que a Profundidade Inicial.")  
-          
-        st.divider()  
-        st.subheader(f"Histórico de Manobras e Testemunhos: {furo_atual}")  
-          
-        if manobras_furo:  
-            dados_tabela = []  
-            for row in manobras_furo:  
-                m_id = row[0]
-                dt_m = row[2]
-                de = row[3] or 0.0
-                ate = row[4] or 0.0
-                avanc = row[5] or 0.0
-                rec = row[6] or 0.0
-                rec_pct = row[7] or 0.0
-                caixa = row[8]
-                barrilete = row[9]
-                h_ini = row[10]
-                h_fim = row[11]
-                t_man = row[12]
-                lito = row[13]
-                obs = row[14]
-                operador = row[15]
-                h_tr = row[19] or 0.0
-
-                dados_tabela.append([
-                    m_id, furo_atual, dt_m, de, ate, avanc, rec, f"{rec_pct:.1f}%", 
-                    caixa, barrilete, h_ini, h_fim, t_man, f"{h_tr:.2f} h", lito, obs, operador
-                ])  
-              
-            df_manobras = pd.DataFrame(  
-                dados_tabela,  
-                columns=[
-                    "ID", "Furo", "Data", "Profundidade Inicial", "Profundidade Final", 
-                    "Avanço", "Recuperação", "Recuperação %", "Caixa", "Barrilete", 
-                    "Horário Início", "Horário Fim", "Tempo", "Horas Trab.", "Litologia", 
-                    "Observações", "Operador Sonda"
-                ]  
-            )  
-            st.dataframe(df_manobras, use_container_width=True)  
-              
-            col_excluir, col_btn = st.columns([3, 1])  
-            with col_excluir:  
-                opcoes_manobra = {f"ID #{row[0]} | De {row[3]:.2f}m até {row[4]:.2f}m": row[0] for row in manobras_furo}  
-                manobra_selecionada = st.selectbox("Selecione uma manobra para remover:", list(opcoes_manobra.keys()))  
-                          
-            with col_btn:  
-                st.write("<br>", unsafe_allow_html=True)  
-                if st.button("Excluir Manobra", use_container_width=True):  
-                    id_para_deletar = opcoes_manobra[manobra_selecionada]  
-                    deletar_manobra(id_para_deletar)  
-                    st.success("Manobra removida com sucesso!")  
-                    st.rerun()  
-        else:  
-            st.info("Nenhuma manobra cadastrada para este furo até o momento.")  
-
-    # ETAPA 4  
-    elif opcao == "4. Fechamento de Turno & Dashboard":  
-        st.title("4. Fechamento de Turno & Dashboard Diário")  
-        st.caption("Visão analítica de produtividade, horas trabalhadas e furos perfurados no dia.")  
-          
-        conn = sqlite3.connect(DB_NAME, timeout=10)
-        df_todas_manobras = pd.read_sql_query("SELECT * FROM manobras_testemunho", conn)
-        df_boletins = pd.read_sql_query("SELECT * FROM boletins_campo", conn)
-        conn.close()
-
-        # DASHBOARD GERAL DE PRODUÇÃO E HORAS TRABALHADAS
-        st.markdown("### 📊 Dashboard Diário de Operação e Horas Trabalhadas")
-        
-        if not df_todas_manobras.empty:
-            df_todas_manobras["data_manobra"] = df_todas_manobras["data_manobra"].fillna(date.today().strftime("%Y-%m-%d"))
-            data_filtro = st.date_input("Filtrar Dashboard por Data:", value=date.today())
-            
-            df_dia = df_todas_manobras[df_todas_manobras["data_manobra"] == str(data_filtro)]
-            
-            # Métricas em Cards
-            total_furos_dia = df_dia["furo_id"].nunique() if not df_dia.empty else 0
-            metras_perfuradas_dia = df_dia["avanco_m"].sum() if not df_dia.empty else 0.0
-            horas_produtivas_dia = df_dia["horas_trab"].sum() if not df_dia.empty else 0.0
-            horas_paradas_dia = df_dia["horas_parado"].sum() if not df_dia.empty else 0.0
-            
-            d1, d2, d3, d4 = st.columns(4)
-            d1.metric("Furos Trabalhados no Dia", f"{total_furos_dia}")
-            d2.metric("Metros Perfurados no Dia", f"{metras_perfuradas_dia:.2f} m")
-            d3.metric("Horas Trabalhadas (Perfuração)", f"{horas_produtivas_dia:.2f} h")
-            d4.metric("Horas Paradas / Interrupções", f"{horas_paradas_dia:.2f} h")
-
-            st.divider()
-
-            dash_col1, dash_col2 = st.columns(2)
-
-            with dash_col1:
-                # Gráfico de Furos vs Metragem
-                df_furos_grouped = df_todas_manobras.groupby(["data_manobra", "furo_id"])["avanco_m"].sum().reset_index()
-                fig_furos = px.bar(
-                    df_furos_grouped, 
-                    x="data_manobra", 
-                    y="avanco_m", 
-                    color="furo_id",
-                    title="Avanço Perfurado (m) por Furo por Dia",
-                    labels={"data_manobra": "Data", "avanco_m": "Metros Perfurados (m)", "furo_id": "Furo"}
-                )
-                st.plotly_chart(fig_furos, use_container_width=True)
-
-            with dash_col2:
-                # Gráfico de Horas Trabalhadas vs Paradas
-                df_horas_grouped = df_todas_manobras.groupby("data_manobra")[["horas_trab", "horas_parado"]].sum().reset_index()
-                fig_horas = px.bar(
-                    df_horas_grouped,
-                    x="data_manobra",
-                    y=["horas_trab", "horas_parado"],
-                    title="Distribuição Diária de Horas (Trabalhadas x Paradas)",
-                    labels={"data_manobra": "Data", "value": "Horas (h)", "variable": "Categoria"},
-                    barmode="stack"
-                )
-                st.plotly_chart(fig_horas, use_container_width=True)
-        else:
-            st.info("Sem dados operacionais para compor os gráficos do dashboard.")
+            salvar_manobra(
+                furo=furo_atual,
+                data_m=data_manobra,
+                de=de_m,
+                ate=ate_m,
+                avanco=avanco_calc,
+                recup=recup_m,
+                taxa=taxa_recup,
+                caixa=num_caixa,
+                barrilete=barrilete,
+                h_inicio=str(horario_inicio),
+                h_fim=str(horario_fim),
+                tempo_man=tempo_manobra_auto,
+                litologia=desc_litologica,
+                observacoes=observacoes,
+                operador=operador_sonda,
+                h_trab=horas_trabalhadas,
+                h_parado=horas_paradas,
+                fotos_pil=fotos_manobra_pil
+            )
+            st.success("Manobra salva e boletim sincronizado com sucesso!")
+            st.rerun()
 
         st.divider()
+        st.subheader(f"Histórico do Furo: {furo_atual}")
+        if manobras_furo:
+            for item in manobras_furo:
+                m_id, f_id, dt_m, de, ate, avanc, rec, rec_pct, caixa, bar, h_ini, h_fim, t_man, lito, obs, op, f1, f2, f3, h_tr, h_pr = item
+                with st.expander(f"📍 {de:.2f}m a {ate:.2f}m — Caixa {caixa} | Rec: {rec_pct:.1f}%"):
+                    c_info, c_del = st.columns([5, 1])
+                    with c_info:
+                        st.write(f"**Data:** {dt_m} | **Horário:** {h_ini} - {h_fim} ({t_man}) | **Operador:** {op}")
+                        st.write(f"**Avanço:** {avanc:.2f}m | **Recuperação:** {rec:.2f}m ({rec_pct:.1f}%) | **Barrilete:** {bar}")
+                        st.write(f"**Litologia:** {lito or '-'}")
+                        st.write(f"**Observações:** {obs or '-'}")
+                    with c_del:
+                        if st.button("🗑️ Excluir", key=f"del_{m_id}"):
+                            deletar_manobra(m_id)
+                            st.rerun()
 
-        # FECHAMENTO POR FURO
-        st.subheader("📄 Emissão do Boletim Diário do Furo em PDF")
-        furo_sel = st.text_input("Identificação do Furo para Emissão do BDS", value=st.session_state.get("furo_id", "SP-01"))  
-        manobras = buscar_manobras(furo_sel)  
-          
-        if manobras:  
-            tot_avanco = sum([m[5] or 0.0 for m in manobras])  
-            tot_recup = sum([m[6] or 0.0 for m in manobras])  
-            taxa_global = (tot_recup / tot_avanco * 100) if tot_avanco > 0 else 0.0  
-              
-            obs_pdf = st.text_area("Observações Adicionais para o Relatório Final", value="Trabalho realizado dentro das normas de segurança.")  
-              
-            if st.button("Gerar Boletim em PDF", use_container_width=True):  
-                pdf_bytes = gerar_pdf_boletim(furo_sel, obs_pdf)  
-                st.download_button(  
-                    label="📥 Baixar Boletim Diário de Sondagem (PDF)",  
-                    data=pdf_bytes,  
-                    file_name=f"BDS_{furo_sel}_{datetime.now().strftime('%Y%m%d')}.pdf",  
-                    mime="application/pdf",  
-                    use_container_width=True  
-                )  
-        else:  
-            st.warning(f"Nenhum registro encontrado para o furo **{furo_sel}**.")  
+                    imgs_pil = [bytes_para_pil(f1), bytes_para_pil(f2), bytes_para_pil(f3)]
+                    imgs_validas = [i for i in imgs_pil if i is not None]
+                    if imgs_validas:
+                        cols_img = st.columns(len(imgs_validas))
+                        for idx, img in enumerate(imgs_validas):
+                            cols_img[idx].image(img, use_column_width=True)
+        else:
+            st.info("Nenhuma manobra cadastrada para este furo.")
 
-    # ETAPA 5  
-    elif opcao == "5. Dados do Furo & Perfuração":  
-        st.title("5. Resumo Geral e Cadastro de Furos")  
-        st.caption("Visão consolidada do banco de dados com todos os boletins e manobras gravadas.")  
-          
-        conn = sqlite3.connect(DB_NAME, timeout=10)  
-        df_boletins = pd.read_sql_query("SELECT * FROM boletins_campo ORDER BY id DESC", conn)  
-        df_todas_manobras = pd.read_sql_query("SELECT * FROM manobras_testemunho ORDER BY id DESC", conn)  
-        conn.close()  
-          
-        st.subheader("📋 Resumo dos Boletins Registrados")  
-        if not df_boletins.empty:  
-            st.dataframe(df_boletins, use_container_width=True)  
-        else:  
-            st.info("Nenhum boletim registrado.")  
-              
-        st.subheader("⛏️ Todas as Manobras do Banco de Dados")  
-        if not df_todas_manobras.empty:  
-            st.dataframe(df_todas_manobras, use_container_width=True)  
-        else:  
-            st.info("Nenhuma manobra registrada.")
+    # ETAPA 4
+    elif opcao == "4. Fechamento de Turno & Dashboard":
+        st.title("4. Fechamento de Turno & Dashboard de Produção")
+        furo_atual = st.session_state.get("furo_id", "SP-01")
+        
+        manobras = buscar_manobras(furo_atual)
+        
+        if not manobras:
+            st.warning("Nenhuma manobra registrada para calcular métricas e gerar o relatório.")
+        else:
+            tot_avanco = sum([m[5] or 0 for m in manobras])
+            tot_recup = sum([m[6] or 0 for m in manobras])
+            taxa_media = (tot_recup / tot_avanco * 100) if tot_avanco > 0 else 0.0
+            tot_h_trab = sum([m[19] or 0 for m in manobras])
+            tot_h_parada = sum([m[20] or 0 for m in manobras])
+
+            kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+            kpi1.metric("Avanço Total", f"{tot_avanco:.2f} m")
+            kpi2.metric("Recuperação Total", f"{tot_recup:.2f} m")
+            kpi3.metric("Taxa Média Rec.", f"{taxa_media:.1f}%")
+            kpi4.metric("Horas Trabalhadas", f"{tot_h_trab:.2f} h")
+            kpi5.metric("Horas Paradas", f"{tot_h_parada:.2f} h")
+
+            st.divider()
+            
+            # Gráficos interativos
+            df_m = pd.DataFrame(manobras, columns=[
+                "id", "furo_id", "data_manobra", "de_m", "ate_m", "avanco_m", "recup_m",
+                "taxa_recup_pct", "num_caixa", "barrilete", "horario_inicio", "horario_fim",
+                "tempo_manobra", "descricao_litologica", "observacoes", "operador_sonda",
+                "foto1", "foto2", "foto3", "horas_trab", "horas_parado"
+            ])
+
+            col_g1, col_g2 = st.columns(2)
+            with col_g1:
+                fig_rec = px.bar(
+                    df_m, x="ate_m", y="taxa_recup_pct",
+                    title="Taxa de Recuperação por Profundidade Final (%)",
+                    labels={"ate_m": "Profundidade (m)", "taxa_recup_pct": "Recuperação (%)"},
+                    color="taxa_recup_pct", color_continuous_scale="Blues"
+                )
+                st.plotly_chart(fig_rec, use_container_width=True)
+
+            with col_g2:
+                fig_av = px.line(
+                    df_m, x="ate_m", y="avanco_m", markers=True,
+                    title="Avanço Perfurado por Manobra (m)",
+                    labels={"ate_m": "Profundidade (m)", "avanco_m": "Avanço (m)"}
+                )
+                st.plotly_chart(fig_av, use_container_width=True)
+
+            st.divider()
+            st.subheader("📄 Emissão do Boletim Diário de Sondagem (PDF)")
+            obs_fechamento = st.text_area("Observações Finais do Fechamento de Turno", placeholder="Ocorrências gerais do dia, problemas na sonda...")
+            
+            if st.button("Gerar Boletim em PDF", use_container_width=True):
+                pdf_bytes = gerar_pdf_boletim(furo_atual, obs_fechamento)
+                st.download_button(
+                    label="📥 Baixar Boletim em PDF",
+                    data=pdf_bytes,
+                    file_name=f"Boletim_{furo_atual}_{date.today()}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+
+    # ETAPA 5
+    elif opcao == "5. Dados do Furo & Perfuração":
+        st.title("5. Painel Consolidado de Dados e Registros")
+        
+        furos = buscar_furos_cadastrados()
+        furo_sel = st.selectbox("Selecione o Furo:", furos if furos else [st.session_state.get("furo_id", "SP-01")])
+        
+        manobras = buscar_manobras(furo_sel)
+        
+        if manobras:
+            data_tabela = []
+            for m in manobras:
+                data_tabela.append({
+                    "ID": m[0],
+                    "Data": m[2],
+                    "De (m)": m[3],
+                    "Até (m)": m[4],
+                    "Avanço (m)": m[5],
+                    "Recup (m)": m[6],
+                    "Rec %": f"{m[7]:.1f}%",
+                    "Caixa": m[8],
+                    "Barrilete": m[9],
+                    "Horário": f"{m[10]} - {m[11]}",
+                    "Tempo": m[12],
+                    "Litologia": m[13],
+                    "Operador": m[15]
+                })
+            st.dataframe(pd.DataFrame(data_tabela), use_container_width=True)
+        else:
+            st.info("Nenhum registro encontrado para o furo selecionado.")
