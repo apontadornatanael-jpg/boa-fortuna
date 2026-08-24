@@ -736,7 +736,7 @@ else:
                     if imgs_validas:
                         cols_img = st.columns(len(imgs_validas))
                         for idx, img in enumerate(imgs_validas):
-                            cols_img[idx].image(img, use_column_width=True)
+                            cols_img[idx].image(img, use_container_width=True)
         else:
             st.info("Nenhuma manobra cadastrada para este furo.")
 
