@@ -7,13 +7,13 @@ import io
 import json 
 import streamlit.components.v1 as components 
 import plotly.express as px 
-import plotly.graph_objects as go  
+import plotly.graph_objects as go   
 
 # --- IMPORTAÇÕES PARA GERAÇÃO NATIVA DE PDF (REPORTLAB) --- 
 from reportlab.lib.pagesizes import letter 
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, KeepTogether 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle 
-from reportlab.lib import colors  
+from reportlab.lib import colors   
 
 # --- CONFIGURAÇÃO DA PÁGINA --- 
 st.set_page_config(  
@@ -227,7 +227,7 @@ def salvar_manobra(furo, data_m, de, ate, avanco, recup, taxa, caixa, barrilete,
         INSERT INTO manobras_testemunho  
         (furo_id, data_manobra, de_m, ate_m, avanco_m, recup_m, taxa_recup_pct, num_caixa, barrilete, horario_inicio, horario_fim, tempo_manobra, descricao_litologica, observacoes, operador_sonda, horas_trab, horas_parado, horario, motivo_parada, data_registro, foto1, foto2, foto3)  
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)  
-    ''', (furo, str(data_m), de, ate, avanco, recup, taxa, caixa, barrilete, h_inicio, h_fim, tempo_man, litologia, observacoes, operador, h_trab, h_parado, f"{h_inicio} - {h_fim}", motivo, data_atual, f1, f2, f3))  
+    ''', (furo, str(data_m), de, ate, avanco, recup, taxa, caixa, barrilete, str(h_inicio), str(h_fim), tempo_man, litologia, observacoes, operador, h_trab, h_parado, f"{h_inicio} - {h_fim}", motivo, data_atual, f1, f2, f3))  
     conn.commit()  
     conn.close()  
     sincronizar_boletim_automatico(furo, ate)  
@@ -301,7 +301,7 @@ def gerar_pdf_boletim(furo_id, obs_fechamento=""):
         'DocSubTitle', parent=styles['Normal'], fontSize=10, leading=12, textColor=colors.HexColor('#475569'), alignment=1, fontName='Helvetica-Bold'  
     )  
     section_heading = ParagraphStyle(  
-        'SectionHeading', parent=styles['Heading2'], fontSize=12, leading=14, textColor=colors.HexColor('#1E3A8A'), spaceBefore=10, spaceAfter=5, fontName='Helvetica-Bold'  
+        'SectionHeading', parent=styles['Heading2'], fontSize=11, leading=13, textColor=colors.HexColor('#1E3A8A'), spaceBefore=8, spaceAfter=4, fontName='Helvetica-Bold'  
     )  
     cell_style = ParagraphStyle(  
         'CellText', parent=styles['Normal'], fontSize=7, leading=9, textColor=colors.HexColor('#1E293B')  
@@ -342,7 +342,7 @@ def gerar_pdf_boletim(furo_id, obs_fechamento=""):
         ('BOTTOMPADDING', (0,0), (-1,-1), 6),  
     ]))  
     elements.append(table_info)  
-    elements.append(Spacer(1, 12))  
+    elements.append(Spacer(1, 10))  
       
     elements.append(Paragraph("Avanço de Perfuração e Recuperação de Testemunhos", section_heading))  
     manobras = buscar_manobras(furo_id)  
@@ -563,7 +563,7 @@ else:
             except Exception:  
                 pass  
           
-        col_gps1, col_gps2, col_gps3 = st.columns(3)
+        col_gps1, col_gps2, col_gps3 = st.columns(3) 
         lat_val = st.session_state.get("latitude", "")  
         lng_val = st.session_state.get("longitude", "")  
         acc_val = st.session_state.get("precisao_gps", "")  
@@ -633,12 +633,14 @@ else:
             de_m = st.number_input("Profundidade Inicial (m)", min_value=0.0, step=0.5, value=float(prox_de), format="%.2f")  
         with c5:  
             ate_m = st.number_input("Profundidade Final (m)", min_value=0.0, step=0.5, value=float(prox_ate), format="%.2f")  
+        
+        avanco_calc = round(max(0.0, ate_m - de_m), 2)
+
         with c6:  
-            recup_m = st.number_input("Recuperação (m)", min_value=0.0, step=0.1, value=round(max(0.0, ate_m - de_m), 2), format="%.2f")  
+            recup_m = st.number_input("Recuperação (m)", min_value=0.0, max_value=float(avanco_calc), step=0.05, value=float(avanco_calc), format="%.2f")  
         with c7:  
             num_caixa = st.text_input("Caixa", value=manobras_furo[-1][8] if manobras_furo else "01")  
 
-        avanco_calc = round(max(0.0, ate_m - de_m), 2)
         taxa_recup = min(100.0, round((recup_m / avanco_calc * 100), 1)) if avanco_calc > 0 else 0.0  
 
         st.caption(f"⚡ **Avanço Calculado:** {avanco_calc:.2f} m | **Taxa de Recuperação:** {taxa_recup:.1f}%")
@@ -675,10 +677,10 @@ else:
 
         st.markdown("---")  
         st.subheader("Registro Fotográfico (Até 3 Fotos)")  
-                      
+                    
         tab_galeria, tab_camera = st.tabs(["📁 Selecionar da Galeria", "📸 Câmera ao Vivo"])  
         fotos_manobra_pil = []  
-                      
+                    
         with tab_galeria:  
             fotos_upload = st.file_uploader("Upload de imagens de campo", type=["jpg", "png", "jpeg"], accept_multiple_files=True)  
             if fotos_upload:  
@@ -692,146 +694,59 @@ else:
           
         if st.button("Adicionar Manobra Automática", use_container_width=True):  
             salvar_manobra(
-                furo=furo_atual,
-                data_m=data_manobra,
-                de=de_m,
-                ate=ate_m,
-                avanco=avanco_calc,
-                recup=recup_m,
-                taxa=taxa_recup,
-                caixa=num_caixa,
-                barrilete=barrilete,
-                h_inicio=str(horario_inicio),
-                h_fim=str(horario_fim),
-                tempo_man=tempo_manobra_auto,
-                litologia=desc_litologica,
-                observacoes=observacoes,
-                operador=operador_sonda,
-                h_trab=horas_trabalhadas,
-                h_parado=horas_paradas,
-                fotos_pil=fotos_manobra_pil
+                furo_atual, data_manobra, de_m, ate_m, avanco_calc, recup_m, taxa_recup,
+                num_caixa, barrilete, horario_inicio, horario_fim, tempo_manobra_auto,
+                desc_litologica, observacoes, operador_sonda, horas_trabalhadas, horas_paradas,
+                "Nenhum", fotos_manobra_pil
             )
-            st.success("Manobra salva e boletim sincronizado com sucesso!")
+            st.success("Manobra registrada com sucesso!")
             st.rerun()
 
         st.divider()
-        st.subheader(f"Histórico do Furo: {furo_atual}")
+        st.subheader("Manobras Registradas para este Furo")
         if manobras_furo:
-            for item in manobras_furo:
-                m_id, f_id, dt_m, de, ate, avanc, rec, rec_pct, caixa, bar, h_ini, h_fim, t_man, lito, obs, op, f1, f2, f3, h_tr, h_pr = item
-                with st.expander(f"📍 {de:.2f}m a {ate:.2f}m — Caixa {caixa} | Rec: {rec_pct:.1f}%"):
-                    c_info, c_del = st.columns([5, 1])
-                    with c_info:
-                        st.write(f"**Data:** {dt_m} | **Horário:** {h_ini} - {h_fim} ({t_man}) | **Operador:** {op}")
-                        st.write(f"**Avanço:** {avanc:.2f}m | **Recuperação:** {rec:.2f}m ({rec_pct:.1f}%) | **Barrilete:** {bar}")
-                        st.write(f"**Litologia:** {lito or '-'}")
-                        st.write(f"**Observações:** {obs or '-'}")
-                    with c_del:
-                        if st.button("🗑️ Excluir", key=f"del_{m_id}"):
-                            deletar_manobra(m_id)
-                            st.rerun()
-
-                    imgs_pil = [bytes_para_pil(f1), bytes_para_pil(f2), bytes_para_pil(f3)]
-                    imgs_validas = [i for i in imgs_pil if i is not None]
-                    if imgs_validas:
-                        cols_img = st.columns(len(imgs_validas))
-                        for idx, img in enumerate(imgs_validas):
-                            cols_img[idx].image(img, use_container_width=True)
-        else:
-            st.info("Nenhuma manobra cadastrada para este furo.")
-
-    # ETAPA 4
-    elif opcao == "4. Fechamento de Turno & Dashboard":
-        st.title("4. Fechamento de Turno & Dashboard de Produção")
-        furo_atual = st.session_state.get("furo_id", "SP-01")
-        
-        manobras = buscar_manobras(furo_atual)
-        
-        if not manobras:
-            st.warning("Nenhuma manobra registrada para calcular métricas e gerar o relatório.")
-        else:
-            tot_avanco = sum([m[5] or 0 for m in manobras])
-            tot_recup = sum([m[6] or 0 for m in manobras])
-            taxa_media = (tot_recup / tot_avanco * 100) if tot_avanco > 0 else 0.0
-            tot_h_trab = sum([m[19] or 0 for m in manobras])
-            tot_h_parada = sum([m[20] or 0 for m in manobras])
-
-            kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-            kpi1.metric("Avanço Total", f"{tot_avanco:.2f} m")
-            kpi2.metric("Recuperação Total", f"{tot_recup:.2f} m")
-            kpi3.metric("Taxa Média Rec.", f"{taxa_media:.1f}%")
-            kpi4.metric("Horas Trabalhadas", f"{tot_h_trab:.2f} h")
-            kpi5.metric("Horas Paradas", f"{tot_h_parada:.2f} h")
-
-            st.divider()
-            
-            # Gráficos interativos
-            df_m = pd.DataFrame(manobras, columns=[
-                "id", "furo_id", "data_manobra", "de_m", "ate_m", "avanco_m", "recup_m",
-                "taxa_recup_pct", "num_caixa", "barrilete", "horario_inicio", "horario_fim",
-                "tempo_manobra", "descricao_litologica", "observacoes", "operador_sonda",
-                "foto1", "foto2", "foto3", "horas_trab", "horas_parado"
+            df_m = pd.DataFrame(manobras_furo, columns=[
+                "ID", "Furo", "Data", "De (m)", "Até (m)", "Avanço (m)", "Recup (m)", "Recup (%)",
+                "Caixa", "Barrilete", "H. Início", "H. Fim", "Tempo", "Litologia", "Obs", "Operador",
+                "Foto 1", "Foto 2", "Foto 3", "H. Trab", "H. Parado"
             ])
-
-            col_g1, col_g2 = st.columns(2)
-            with col_g1:
-                fig_rec = px.bar(
-                    df_m, x="ate_m", y="taxa_recup_pct",
-                    title="Taxa de Recuperação por Profundidade Final (%)",
-                    labels={"ate_m": "Profundidade (m)", "taxa_recup_pct": "Recuperação (%)"},
-                    color="taxa_recup_pct", color_continuous_scale="Blues"
-                )
-                st.plotly_chart(fig_rec, use_container_width=True)
-
-            with col_g2:
-                fig_av = px.line(
-                    df_m, x="ate_m", y="avanco_m", markers=True,
-                    title="Avanço Perfurado por Manobra (m)",
-                    labels={"ate_m": "Profundidade (m)", "avanco_m": "Avanço (m)"}
-                )
-                st.plotly_chart(fig_av, use_container_width=True)
-
-            st.divider()
-            st.subheader("📄 Emissão do Boletim Diário de Sondagem (PDF)")
-            obs_fechamento = st.text_area("Observações Finais do Fechamento de Turno", placeholder="Ocorrências gerais do dia, problemas na sonda...")
+            st.dataframe(df_m[["ID", "Data", "De (m)", "Até (m)", "Avanço (m)", "Recup (m)", "Recup (%)", "Caixa", "Barrilete", "Litologia", "Operador"]], use_container_width=True)
             
-            if st.button("Gerar Boletim em PDF", use_container_width=True):
-                pdf_bytes = gerar_pdf_boletim(furo_atual, obs_fechamento)
-                st.download_button(
-                    label="📥 Baixar Boletim em PDF",
-                    data=pdf_bytes,
-                    file_name=f"Boletim_{furo_atual}_{date.today()}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+            del_id = st.number_input("ID da manobra para excluir", min_value=1, step=1, value=int(manobras_furo[-1][0]))
+            if st.button("Excluir Manobra Selecionada"):
+                deletar_manobra(del_id)
+                st.warning("Manobra excluída.")
+                st.rerun()
 
-    # ETAPA 5
-    elif opcao == "5. Dados do Furo & Perfuração":
-        st.title("5. Painel Consolidado de Dados e Registros")
+    # ETAPA 4  
+    elif opcao == "4. Fechamento de Turno & Dashboard":  
+        st.title("4. Fechamento de Turno e Emissão de PDF")  
+        st.caption("Resumo dos avanços e exportação do Boletim Diário de Sondagem.")  
         
-        furos = buscar_furos_cadastrados()
-        furo_sel = st.selectbox("Selecione o Furo:", furos if furos else [st.session_state.get("furo_id", "SP-01")])
+        furos = buscar_furos_cadastrados()  
+        if not furos:  
+            st.info("Nenhum furo registrado até o momento.")  
+        else:  
+            furo_sel = st.selectbox("Selecione o Furo para Gerar o PDF", furos)  
+            obs_pdf = st.text_area("Observações Finais de Campo (Serão exibidas no PDF)", placeholder="Informe paralisações gerais, condições climáticas ou problemas mecânicos...")  
+            
+            pdf_bytes = gerar_pdf_boletim(furo_sel, obs_pdf)  
+            
+            st.download_button(  
+                label="📄 Baixar Boletim Diário de Sondagem (PDF)",  
+                data=pdf_bytes,  
+                file_name=f"BDS_{furo_sel}_{date.today().strftime('%Y%m%d')}.pdf",  
+                mime="application/pdf",  
+                use_container_width=True  
+            )  
+
+    # ETAPA 5  
+    elif opcao == "5. Dados do Furo & Perfuração":  
+        st.title("5. Dados Gerais do Banco de Dados")  
+        st.caption("Visão agregada de todos os boletins salvos localmente.")  
         
-        manobras = buscar_manobras(furo_sel)
+        conn = sqlite3.connect(DB_NAME)  
+        df_boletins = pd.read_sql_query("SELECT * FROM boletins_campo", conn)  
+        conn.close()  
         
-        if manobras:
-            data_tabela = []
-            for m in manobras:
-                data_tabela.append({
-                    "ID": m[0],
-                    "Data": m[2],
-                    "De (m)": m[3],
-                    "Até (m)": m[4],
-                    "Avanço (m)": m[5],
-                    "Recup (m)": m[6],
-                    "Rec %": f"{m[7]:.1f}%",
-                    "Caixa": m[8],
-                    "Barrilete": m[9],
-                    "Horário": f"{m[10]} - {m[11]}",
-                    "Tempo": m[12],
-                    "Litologia": m[13],
-                    "Operador": m[15]
-                })
-            st.dataframe(pd.DataFrame(data_tabela), use_container_width=True)
-        else:
-            st.info("Nenhum registro encontrado para o furo selecionado.")
+        st.dataframe(df_boletins, use_container_width=True)
