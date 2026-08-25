@@ -130,8 +130,8 @@ def obter_geolocalizacao_gps_auto():
                     value: JSON.stringify(coords)  
                 }, '*');  
             },  
-            function(err) { 
-                status.innerText = '⚠️ Erro ao obter GPS: ' + err.message; 
+            function(err) {  
+                status.innerText = '⚠️ Erro ao obter GPS: ' + err.message;  
             },  
             { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }  
         );  
@@ -557,20 +557,26 @@ else:
         if gps_json:  
             try:  
                 coords = json.loads(gps_json)  
-                st.session_state["latitude"] = float(coords["lat"])  
-                st.session_state["longitude"] = float(coords["lng"])  
-                st.session_state["precisao_gps"] = float(coords["precisao"])  
+                lat_nova = float(coords["lat"])
+                lng_nova = float(coords["lng"])
+                prec_nova = float(coords["precisao"])
+
+                if st.session_state.get("latitude") != lat_nova:
+                    st.session_state["latitude"] = lat_nova
+                    st.session_state["longitude"] = lng_nova
+                    st.session_state["precisao_gps"] = prec_nova
+                    st.rerun()
             except Exception:  
                 pass  
           
-        col_gps1, col_gps2, col_gps3 = st.columns(3) 
+        col_gps1, col_gps2, col_gps3 = st.columns(3)  
         lat_val = st.session_state.get("latitude", "")  
         lng_val = st.session_state.get("longitude", "")  
         acc_val = st.session_state.get("precisao_gps", "")  
                       
-        col_gps1.text_input("Latitude", value=str(lat_val) if lat_val else "Aguardando GPS...", key="lat_input", disabled=True)  
-        col_gps2.text_input("Longitude", value=str(lng_val) if lng_val else "Aguardando GPS...", key="lng_input", disabled=True)  
-        col_gps3.text_input("Precisão (m)", value=f"{acc_val} m" if acc_val else "Aguardando...", key="acc_input", disabled=True)  
+        col_gps1.text_input("Latitude", value=str(lat_val) if lat_val != "" else "Aguardando GPS...", key="lat_input", disabled=True)  
+        col_gps2.text_input("Longitude", value=str(lng_val) if lng_val != "" else "Aguardando GPS...", key="lng_input", disabled=True)  
+        col_gps3.text_input("Precisão (m)", value=f"{acc_val} m" if acc_val != "" else "Aguardando...", key="acc_input", disabled=True)  
           
         st.divider()  
           
@@ -692,61 +698,12 @@ else:
             if foto_cam and len(fotos_manobra_pil) < 3:  
                 fotos_manobra_pil.append(Image.open(foto_cam))  
           
-        if st.button("Adicionar Manobra Automática", use_container_width=True):  
+        if st.button("Adicionar Manobra"):
             salvar_manobra(
                 furo_atual, data_manobra, de_m, ate_m, avanco_calc, recup_m, taxa_recup,
                 num_caixa, barrilete, horario_inicio, horario_fim, tempo_manobra_auto,
-                desc_litologica, observacoes, operador_sonda, horas_trabalhadas, horas_paradas,
-                "Nenhum", fotos_manobra_pil
+                desc_litologica, observacoes, operador_sonda, h_trab=horas_trabalhadas,
+                h_parado=horas_paradas, fotos_pil=fotos_manobra_pil
             )
             st.success("Manobra registrada com sucesso!")
             st.rerun()
-
-        st.divider()
-        st.subheader("Manobras Registradas para este Furo")
-        if manobras_furo:
-            df_m = pd.DataFrame(manobras_furo, columns=[
-                "ID", "Furo", "Data", "De (m)", "Até (m)", "Avanço (m)", "Recup (m)", "Recup (%)",
-                "Caixa", "Barrilete", "H. Início", "H. Fim", "Tempo", "Litologia", "Obs", "Operador",
-                "Foto 1", "Foto 2", "Foto 3", "H. Trab", "H. Parado"
-            ])
-            st.dataframe(df_m[["ID", "Data", "De (m)", "Até (m)", "Avanço (m)", "Recup (m)", "Recup (%)", "Caixa", "Barrilete", "Litologia", "Operador"]], use_container_width=True)
-            
-            del_id = st.number_input("ID da manobra para excluir", min_value=1, step=1, value=int(manobras_furo[-1][0]))
-            if st.button("Excluir Manobra Selecionada"):
-                deletar_manobra(del_id)
-                st.warning("Manobra excluída.")
-                st.rerun()
-
-    # ETAPA 4  
-    elif opcao == "4. Fechamento de Turno & Dashboard":  
-        st.title("4. Fechamento de Turno e Emissão de PDF")  
-        st.caption("Resumo dos avanços e exportação do Boletim Diário de Sondagem.")  
-        
-        furos = buscar_furos_cadastrados()  
-        if not furos:  
-            st.info("Nenhum furo registrado até o momento.")  
-        else:  
-            furo_sel = st.selectbox("Selecione o Furo para Gerar o PDF", furos)  
-            obs_pdf = st.text_area("Observações Finais de Campo (Serão exibidas no PDF)", placeholder="Informe paralisações gerais, condições climáticas ou problemas mecânicos...")  
-            
-            pdf_bytes = gerar_pdf_boletim(furo_sel, obs_pdf)  
-            
-            st.download_button(  
-                label="📄 Baixar Boletim Diário de Sondagem (PDF)",  
-                data=pdf_bytes,  
-                file_name=f"BDS_{furo_sel}_{date.today().strftime('%Y%m%d')}.pdf",  
-                mime="application/pdf",  
-                use_container_width=True  
-            )  
-
-    # ETAPA 5  
-    elif opcao == "5. Dados do Furo & Perfuração":  
-        st.title("5. Dados Gerais do Banco de Dados")  
-        st.caption("Visão agregada de todos os boletins salvos localmente.")  
-        
-        conn = sqlite3.connect(DB_NAME)  
-        df_boletins = pd.read_sql_query("SELECT * FROM boletins_campo", conn)  
-        conn.close()  
-        
-        st.dataframe(df_boletins, use_container_width=True)
