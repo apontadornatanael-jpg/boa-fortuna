@@ -1,6 +1,8 @@
 streamlit
 pandas
-pillow
-reportlab
+numpy
 plotly
+supabase
 openpyxl
+reportlab
+matplotlib
