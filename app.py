@@ -11,10 +11,11 @@ st.set_page_config(
 )
 
 # --- INICIALIZAÇÃO DO ESTADO DA SESSÃO (PERSISTÊNCIA LOCAL) ---
-if "manobras" not in st.state_defaults:
+# ✅ CÓDIGO CORRIGIDO:
+if "manobras" not in st.session_state:
     st.session_state["manobras"] = []
 
-if "paradas" not in st.state_defaults:
+if "paradas" not in st.session_state:
     st.session_state["paradas"] = []
 
 st.title("⛏️ Diário de Campo - Sondagem C4 Coring")
