@@ -4,9 +4,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 import sqlite3
 from datetime import datetime
+import io
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 # ==========================================
-# 1. CONFIGURAÇÃO E ESTILIZACÃO DA PÁGINA
+# 1. CONFIGURAÇÃO E ESTILIZAÇÃO DA PÁGINA
 # ==========================================
 st.set_page_config(
     page_title="CoreLog Pro - Geotechnical Drilling System",
@@ -15,13 +19,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS para acabamento profissional
+# Estilização CSS customizada para visual executivo
 st.markdown("""
 <style>
-    /* Estilização Geral */
     .main { background-color: #F8FAFC; }
     
-    /* Cards de Métricas Customizados */
     .metric-card {
         background: #FFFFFF;
         border-radius: 10px;
@@ -47,8 +49,6 @@ st.markdown("""
         color: #94A3B8;
         margin-top: 2px;
     }
-    
-    /* Destaques em Tabelas e Botões */
     .stButton>button {
         border-radius: 6px;
         font-weight: 600;
@@ -349,11 +349,8 @@ with tab_log:
                 st.success("Manobra registrada com sucesso!")
                 st.rerun()
 
-    # Tabela Visual de Manobras Registradas
     if not df_manobras.empty:
         st.markdown("### 📜 Registros de Manobras do Furo")
-        
-        # Formatação Visual da Tabela
         df_exibir = df_manobras.rename(columns={
             "de_m": "De (m)", "ate_m": "Até (m)", "avanco_m": "Avanço (m)",
             "recup_m": "Rec. (m)", "recup_pct": "Rec. (%)", "rqd_m": "RQD (m)",
@@ -416,7 +413,6 @@ with tab_perfil:
         col_p1, col_p2 = st.columns(2)
         
         with col_p1:
-            # Gráfico de Perfil Litológico
             fig_lito = px.bar(
                 df_manobras,
                 x="avanco_m",
@@ -431,7 +427,6 @@ with tab_perfil:
             st.plotly_chart(fig_lito, use_container_width=True)
             
         with col_p2:
-            # Gráfico de Variação de Recuperação e RQD
             fig_rqd = go.Figure()
             fig_rqd.add_trace(go.Scatter(x=df_manobras['de_m'], y=df_manobras['recup_pct'], name="Recuperação (%)", mode='lines+markers', line=dict(color='#22C55E', width=2)))
             fig_rqd.add_trace(go.Scatter(x=df_manobras['de_m'], y=df_manobras['rqd_pct'], name="RQD (%)", mode='lines+markers', line=dict(color='#3B82F6', width=2)))
@@ -446,7 +441,7 @@ with tab_perfil:
             st.plotly_chart(fig_rqd, use_container_width=True)
 
 # ==========================================
-# ABA 4: GESTÃO DE DADOS E EXPORTAÇÃO
+# ABA 4: GESTÃO DE DADOS E EXPORTAÇÃO EXCEL
 # ==========================================
 with tab_gestao:
     st.subheader("Gerenciamento de Registros e Exportação de Relatórios")
@@ -454,16 +449,117 @@ with tab_gestao:
     col_e1, col_e2 = st.columns(2)
     
     with col_e1:
-        st.markdown("### 📥 Exportar Dados")
-        st.write("Baixe a planilha consolidada para arquivamento ou envio ao cliente.")
+        st.markdown("### 📊 Exportar Planilha Formatada (.xlsx)")
+        st.write("Baixe o boletim formatado em Excel pronto para apresentação.")
         
         if not df_manobras.empty:
-            csv_manobras = df_manobras.to_csv(index=False).encode('utf-8')
+            def gerar_excel_formatado(df, id_furo):
+                wb = Workbook()
+                ws = wb.active
+                ws.title = f"Furo {id_furo}"
+                
+                # Exibir linhas de grade no Excel
+                ws.views.sheetView[0].showGridLines = True
+                
+                # Definir cores e estilos
+                cor_cabecalho = "1E293B"  # Grafite Escuro
+                cor_linha_par = "F8FAFC"   # Cinza bem claro
+                
+                fonte_titulo = Font(name="Calibri", size=14, bold=True, color="1E293B")
+                fonte_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+                fonte_dados = Font(name="Calibri", size=10)
+                
+                preenchimento_header = PatternFill(start_color=cor_cabecalho, end_color=cor_cabecalho, fill_type="solid")
+                preenchimento_zebrado = PatternFill(start_color=cor_linha_par, end_color=cor_linha_par, fill_type="solid")
+                
+                alinhamento_centro = Alignment(horizontal="center", vertical="center")
+                alinhamento_esquerda = Alignment(horizontal="left", vertical="center")
+                
+                borda_fina = Border(
+                    left=Side(style='thin', color='CBD5E1'),
+                    right=Side(style='thin', color='CBD5E1'),
+                    top=Side(style='thin', color='CBD5E1'),
+                    bottom=Side(style='thin', color='CBD5E1')
+                )
+                
+                # Título Principal
+                ws.append([f"BOLETIM DIÁRIO DE SONDAGEM ROTATIVA - FURO: {id_furo}"])
+                ws.cell(row=1, column=1).font = fonte_titulo
+                ws.append([]) # Espaçamento
+                
+                # Cabeçalhos
+                colunas = [
+                    "De (m)", "Até (m)", "Avanço (m)", "Recup. (m)", 
+                    "Recup. (%)", "RQD (m)", "RQD (%)", "Qualidade RQD", 
+                    "Litologia", "Caixa Nº", "Retorno Fluido"
+                ]
+                ws.append(colunas)
+                
+                linha_header = 3
+                for col_idx in range(1, len(colunas) + 1):
+                    cell = ws.cell(row=linha_header, column=col_idx)
+                    cell.font = fonte_header
+                    cell.fill = preenchimento_header
+                    cell.alignment = alinhamento_centro
+                    cell.border = borda_fina
+                
+                # Inserção de Dados
+                dados_cols = [
+                    "de_m", "ate_m", "avanco_m", "recup_m", 
+                    "recup_pct", "rqd_m", "rqd_pct", "qualidade_rqd", 
+                    "litologia", "caixa_num", "perda_agua"
+                ]
+                
+                for r_idx, row in df[dados_cols].iterrows():
+                    row_num = linha_header + 1 + r_idx
+                    val_lista = row.tolist()
+                    ws.append(val_lista)
+                    
+                    is_par = (r_idx % 2 == 0)
+                    for c_idx in range(1, len(val_lista) + 1):
+                        cell = ws.cell(row=row_num, column=c_idx)
+                        cell.font = fonte_dados
+                        cell.border = borda_fina
+                        
+                        if is_par:
+                            cell.fill = preenchimento_zebrado
+                            
+                        # Formatação numérica profissional
+                        if c_idx in [1, 2, 3, 4, 6]:
+                            cell.number_format = '0.00" m"'
+                            cell.alignment = alinhamento_centro
+                        elif c_idx in [5, 7]:
+                            cell.number_format = '0.0"%"'
+                            cell.alignment = alinhamento_centro
+                        elif c_idx in [8, 10, 11]:
+                            cell.alignment = alinhamento_centro
+                        else:
+                            cell.alignment = alinhamento_esquerda
+
+                # Ajuste Automático de Largura das Colunas
+                for col in ws.columns:
+                    max_len = 0
+                    col_letter = get_column_letter(col[0].column)
+                    for cell in col:
+                        if cell.row >= linha_header:
+                            val_str = str(cell.value or '')
+                            if len(val_str) > max_len:
+                                max_len = len(val_str)
+                    ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
+                
+                output = io.BytesIO()
+                wb.save(output)
+                output.seek(0)
+                return output
+
+            excel_bytes = gerar_excel_formatado(df_manobras, furo_selecionado)
+            
             st.download_button(
-                label="📄 Baixar Boletim de Manobras (CSV)",
-                data=csv_manobras,
-                file_name=f"boletim_sondagem_{furo_selecionado}.csv",
-                mime="text/csv",
+                label="📊 Baixar Planilha Formatada (.XLSX)",
+                data=excel_bytes,
+                file_name=f"Boletim_Sondagem_{furo_selecionado}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
                 use_container_width=True
             )
             
@@ -471,7 +567,7 @@ with tab_gestao:
         st.markdown("### 🗑️ Exclusão de Registros Incorretos")
         if not df_manobras.empty:
             manobra_del = st.selectbox("Selecione o ID da Manobra para Remover:", df_manobras['id'].tolist())
-            if st.button("Remover Manobra Selecionada", type="primary"):
+            if st.button("Remover Manobra Selecionada"):
                 deletar_registro("manobras", manobra_del)
                 st.success(f"Manobra #{manobra_del} removida com sucesso.")
                 st.rerun()
